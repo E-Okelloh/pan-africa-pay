@@ -17,7 +17,7 @@ pub struct EventId(pub uuid::Uuid);
 
 impl EventId {
     pub fn new() -> Self {
-        Self(uuid::Uuid::new_v7())
+        Self(uuid::Uuid::now_v7())
     }
 }
 

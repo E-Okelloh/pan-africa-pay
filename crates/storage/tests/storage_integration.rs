@@ -7,9 +7,7 @@
 use std::time::Duration;
 
 use pan_africa_pay_domain::error::AppResult;
-use pan_africa_pay_domain::traits::{
-    IdempotencyRepository, PaymentRepository, WalletRepository,
-};
+use pan_africa_pay_domain::traits::{IdempotencyRepository, PaymentRepository, WalletRepository};
 use pan_africa_pay_domain::types::{
     Currency, Money, Payment, PaymentId, PaymentStatus, PaymentType, Rail, UserId,
 };
@@ -19,8 +17,9 @@ use pan_africa_pay_storage::repositories::Repositories;
 /// Build a fresh database pool, applying migrations if needed.
 async fn test_pool() -> Option<DatabasePool> {
     let config = DatabaseConfig {
-        url: std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/pan_africa_pay".to_string()),
+        url: std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://postgres:postgres@localhost:5432/pan_africa_pay".to_string()
+        }),
         ..DatabaseConfig::default()
     };
 
@@ -64,16 +63,14 @@ async fn payment_repo_crud_round_trip() -> AppResult<()> {
     let user_id = UserId::new();
 
     // Fresh user row is required due to the FK constraint.
-    sqlx::query(
-        "INSERT INTO users (id, email, phone, password_hash) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(user_id.0)
-    .bind(format!("{}@test.local", user_id.0))
-    .bind("+254712345678")
-    .bind("not-a-real-hash")
-    .execute(&pool.pg)
-    .await
-    .map_err(|e| pan_africa_pay_domain::error::AppError::internal(e.to_string()))?;
+    sqlx::query("INSERT INTO users (id, email, phone, password_hash) VALUES ($1, $2, $3, $4)")
+        .bind(user_id.0)
+        .bind(format!("{}@test.local", user_id.0))
+        .bind("+254712345678")
+        .bind("not-a-real-hash")
+        .execute(&pool.pg)
+        .await
+        .map_err(|e| pan_africa_pay_domain::error::AppError::internal(e.to_string()))?;
 
     let payment = sample_payment(user_id);
     repos.payments.create_payment(&payment).await?;
@@ -129,21 +126,16 @@ async fn wallet_repo_balance_adjustments_are_atomic() -> AppResult<()> {
     let repos = Repositories::new(pool.pg.clone(), pool.redis.clone());
     let user_id = UserId::new();
 
-    sqlx::query(
-        "INSERT INTO users (id, email, phone, password_hash) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(user_id.0)
-    .bind(format!("{}@test.local", user_id.0))
-    .bind("+254712345678")
-    .bind("not-a-real-hash")
-    .execute(&pool.pg)
-    .await
-    .map_err(|e| pan_africa_pay_domain::error::AppError::internal(e.to_string()))?;
+    sqlx::query("INSERT INTO users (id, email, phone, password_hash) VALUES ($1, $2, $3, $4)")
+        .bind(user_id.0)
+        .bind(format!("{}@test.local", user_id.0))
+        .bind("+254712345678")
+        .bind("not-a-real-hash")
+        .execute(&pool.pg)
+        .await
+        .map_err(|e| pan_africa_pay_domain::error::AppError::internal(e.to_string()))?;
 
-    let wallet = repos
-        .wallets
-        .create_wallet(user_id, Currency::KES)
-        .await?;
+    let wallet = repos.wallets.create_wallet(user_id, Currency::KES).await?;
     assert_eq!(wallet.balance, 0);
 
     let credited = repos.wallets.adjust_balance(wallet.id, 5_000).await?;
@@ -209,5 +201,7 @@ async fn database_pool_health_check_passes() -> AppResult<()> {
     };
     tokio::time::timeout(Duration::from_secs(10), pool.health_check())
         .await
-        .map_err(|_| pan_africa_pay_domain::error::AppError::service_unavailable("health check timed out"))?
+        .map_err(|_| {
+            pan_africa_pay_domain::error::AppError::service_unavailable("health check timed out")
+        })?
 }

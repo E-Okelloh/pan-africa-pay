@@ -34,17 +34,30 @@ pub trait PaymentRepository: Send + Sync {
     ) -> AppResult<()>;
 
     /// Attach the provider callback payload to a payment (for audit).
-    async fn attach_callback_payload(&self, id: PaymentId, payload: serde_json::Value) -> AppResult<()>;
+    async fn attach_callback_payload(
+        &self,
+        id: PaymentId,
+        payload: serde_json::Value,
+    ) -> AppResult<()>;
 
     /// List payments for a user, most recent first.
-    async fn list_payments_by_user(&self, user_id: UserId, limit: i64, offset: i64) -> AppResult<Vec<Payment>>;
+    async fn list_payments_by_user(
+        &self,
+        user_id: UserId,
+        limit: i64,
+        offset: i64,
+    ) -> AppResult<Vec<Payment>>;
 }
 
 /// Persistence for wallets.
 #[async_trait]
 pub trait WalletRepository: Send + Sync {
     /// Create a wallet for a user and currency.
-    async fn create_wallet(&self, user_id: UserId, currency: crate::types::Currency) -> AppResult<Wallet>;
+    async fn create_wallet(
+        &self,
+        user_id: UserId,
+        currency: crate::types::Currency,
+    ) -> AppResult<Wallet>;
 
     /// Load a wallet by id.
     async fn get_wallet(&self, id: WalletId) -> AppResult<Option<Wallet>>;
@@ -131,25 +144,39 @@ mod tests {
     /// In-memory fakes used by domain/service tests.
     mod fakes {
         use super::*;
+        use crate::error::AppError;
 
         pub struct InMemoryPaymentRepo {
-            pub payments: std::collections::HashMap<PaymentId, Payment>,
+            pub payments: std::sync::Mutex<std::collections::HashMap<PaymentId, Payment>>,
         }
 
         #[async_trait]
         impl PaymentRepository for InMemoryPaymentRepo {
             async fn create_payment(&self, payment: &Payment) -> AppResult<()> {
-                self.payments.insert(payment.id, payment.clone());
+                self.payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
+                    .insert(payment.id, payment.clone());
                 Ok(())
             }
 
             async fn get_payment(&self, id: PaymentId) -> AppResult<Option<Payment>> {
-                Ok(self.payments.get(&id).cloned())
-            }
-
-            async fn get_payment_by_idempotency_key(&self, key: &str) -> AppResult<Option<Payment>> {
                 Ok(self
                     .payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
+                    .get(&id)
+                    .cloned())
+            }
+
+            async fn get_payment_by_idempotency_key(
+                &self,
+                key: &str,
+            ) -> AppResult<Option<Payment>> {
+                Ok(self
+                    .payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
                     .values()
                     .find(|p| p.idempotency_key == key)
                     .cloned())
@@ -162,7 +189,12 @@ mod tests {
                 mpesa_receipt_number: Option<String>,
                 kotani_tx_id: Option<String>,
             ) -> AppResult<()> {
-                if let Some(p) = self.payments.get_mut(&id) {
+                if let Some(p) = self
+                    .payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
+                    .get_mut(&id)
+                {
                     p.status = status;
                     p.mpesa_receipt_number = mpesa_receipt_number;
                     p.kotani_tx_id = kotani_tx_id;
@@ -170,8 +202,17 @@ mod tests {
                 Ok(())
             }
 
-            async fn attach_callback_payload(&self, id: PaymentId, payload: serde_json::Value) -> AppResult<()> {
-                if let Some(p) = self.payments.get_mut(&id) {
+            async fn attach_callback_payload(
+                &self,
+                id: PaymentId,
+                payload: serde_json::Value,
+            ) -> AppResult<()> {
+                if let Some(p) = self
+                    .payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
+                    .get_mut(&id)
+                {
                     p.callback_payload = Some(payload);
                 }
                 Ok(())
@@ -183,8 +224,52 @@ mod tests {
                 limit: i64,
                 _offset: i64,
             ) -> AppResult<Vec<Payment>> {
-                Ok(self.payments.values().cloned().take(limit as usize).collect())
+                Ok(self
+                    .payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
+                    .values()
+                    .take(limit as usize)
+                    .cloned()
+                    .collect())
             }
         }
+    }
+
+    use crate::types::{Currency, Money, Payment, PaymentType, Rail};
+    use fakes::InMemoryPaymentRepo;
+
+    #[test]
+    fn in_memory_fake_round_trips_payments() {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(async {
+            let repo = InMemoryPaymentRepo {
+                payments: std::sync::Mutex::new(std::collections::HashMap::new()),
+            };
+            let payment = Payment {
+                id: PaymentId::new(),
+                user_id: UserId::new(),
+                payment_type: PaymentType::Collect,
+                rail: Rail::Mpesa,
+                status: PaymentStatus::Pending,
+                amount: Money::new(10_000, Currency::KES),
+                fee: Money::zero(Currency::KES),
+                mpesa_checkout_request_id: None,
+                mpesa_receipt_number: None,
+                kotani_tx_id: None,
+                callback_payload: None,
+                idempotency_key: "key-1".to_string(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            repo.create_payment(&payment).await.expect("create");
+            let loaded = repo.get_payment(payment.id).await.expect("get");
+            assert_eq!(loaded, Some(payment.clone()));
+            let by_key = repo
+                .get_payment_by_idempotency_key("key-1")
+                .await
+                .expect("by key");
+            assert_eq!(by_key, Some(payment));
+        });
     }
 }

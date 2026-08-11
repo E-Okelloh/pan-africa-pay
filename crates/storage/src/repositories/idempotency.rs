@@ -56,13 +56,6 @@ impl IdempotencyRepository for IdempotencyRepo {
             return Ok(None);
         }
 
-        let record = IdempotencyRecord {
-            key: key.to_string(),
-            request_hash: request_hash.to_string(),
-            response_body: response_body.clone(),
-            status_code,
-        };
-
         // 2. Persist to PostgreSQL first (durable), then Redis (fast).
         sqlx::query(
             r#"
@@ -75,7 +68,7 @@ impl IdempotencyRepository for IdempotencyRepo {
         .bind(request_hash)
         .bind(&response_body)
         .bind(i32::from(status_code))
-        .bind(f64::from(ttl_secs))
+        .bind(ttl_secs as i64)
         .execute(&self.pg)
         .await
         .map_err(|e| map_sql_error("store idempotency record", &e))?;
@@ -89,16 +82,18 @@ impl IdempotencyRepository for IdempotencyRepo {
 
         let redis_key = Self::redis_key(key);
         let status = i64::from(status_code);
+        let body = response_body.to_string();
+        let status_str = status.to_string();
         redis::pipe()
             .hset_multiple(
                 &redis_key,
                 &[
                     (FIELD_REQUEST_HASH, request_hash),
-                    (FIELD_RESPONSE_BODY, response_body.to_string()),
-                    (FIELD_STATUS_CODE, status.to_string()),
+                    (FIELD_RESPONSE_BODY, body.as_str()),
+                    (FIELD_STATUS_CODE, status_str.as_str()),
                 ],
             )
-            .expire(&redis_key, ttl_secs)
+            .expire(&redis_key, ttl_secs as i64)
             .exec_async(&mut conn)
             .await
             .map_err(|e| AppError::internal(format!("redis write error: {e}")))?;
@@ -145,7 +140,7 @@ impl IdempotencyRepository for IdempotencyRepo {
         // 2. Fall back to PostgreSQL.
         let row: Option<(String, String, serde_json::Value, i32)> = sqlx::query_as(
             r#"
-            SELECT request_hash, response_body, status_code
+            SELECT idempotency_key, request_hash, response_body, status_code
             FROM idempotency_keys
             WHERE idempotency_key = $1 AND expires_at > NOW()
             "#,
@@ -156,7 +151,7 @@ impl IdempotencyRepository for IdempotencyRepo {
         .map_err(|e| map_sql_error("load idempotency record", &e))?;
 
         match row {
-            Some((request_hash, response_body, status_code)) => {
+            Some((_, request_hash, response_body, status_code)) => {
                 // Rehydrate Redis so subsequent reads stay fast.
                 let mut conn = self
                     .redis

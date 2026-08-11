@@ -13,7 +13,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["E-Okelloh"]
-rust-version = "1.82"
+rust-version = "1.97"
 
 [workspace.dependencies]
 tokio = { version = "1.40", features = ["full", "tracing"] }
@@ -23,11 +23,11 @@ thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.8", features = ["v4", "v7", "serde", "fast-rng"] }
-rust-decimal = { version = "1.35", features = ["serde"] }
+rust_decimal = { version = "1.35", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "decimal", "json", "offline"] }
-redis = { version = "0.24", features = ["tokio-comp", "connection-manager", "scripts"] }
-deadpool = { version = "0.20", features = ["redis", "postgres"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "rust_decimal", "json"] }
+redis = { version = "1.5", features = ["tokio-comp", "connection-manager"] }
+deadpool-redis = { version = "0.23", features = ["rt_tokio_1"] }
 axum = { version = "0.7", features = ["extra-headers"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["trace", "cors", "classify"] }
@@ -38,7 +38,7 @@ figment = { version = "0.12", features = ["serde", "toml", "env"] }
 secrecy = "0.8"
 zeroize = "1.8"
 blake3 = "1.7"
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "http2"] }
 anyhow = "1.0"
 once_cell = "1.19"
 parking_lot = "0.12"

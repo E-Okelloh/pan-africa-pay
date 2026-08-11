@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 ///
 /// The MVP supports the Kenyan Shilling (fiat rail via M-Pesa) and
 /// USD Coin (USDC, digital rail via Kotani Pay).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Currency {
     /// Kenyan Shilling - local fiat currency.
@@ -31,10 +31,14 @@ pub enum Currency {
 
 impl fmt::Display for Currency {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::KES => "KES",
-            Self::USDC => "USDC",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::KES => "KES",
+                Self::USDC => "USDC",
+            }
+        )
     }
 }
 
@@ -75,13 +79,16 @@ impl Money {
 
     /// Zero amount for the given currency.
     pub fn zero(currency: Currency) -> Self {
-        Self { amount: 0, currency }
+        Self {
+            amount: 0,
+            currency,
+        }
     }
 
     /// Amount in major units (e.g. KES 150.00).
     pub fn to_decimal(&self) -> Decimal {
         let divisor = self.minor_units();
-        Decimal::from_i64_with_scale(self.amount, divisor.ilog10() as u32)
+        Decimal::new(self.amount, divisor.ilog10())
     }
 
     /// Number of minor units per major unit.
@@ -145,10 +152,14 @@ impl PhoneNumber {
     pub fn new(raw: &str) -> AppResult<Self> {
         let normalized = raw.trim().trim_start_matches('+');
         if normalized.is_empty() || !normalized.chars().all(|c| c.is_ascii_digit()) {
-            return Err(AppError::validation("Phone number must contain only digits"));
+            return Err(AppError::validation(
+                "Phone number must contain only digits",
+            ));
         }
         if !(8..=15).contains(&normalized.len()) {
-            return Err(AppError::validation("Phone number must be 8-15 digits (E.164)"));
+            return Err(AppError::validation(
+                "Phone number must be 8-15 digits (E.164)",
+            ));
         }
         Ok(Self(normalized.to_string()))
     }
@@ -215,7 +226,9 @@ impl PaymentType {
             "PAYOUT" => Ok(Self::Payout),
             "DEPOSIT" => Ok(Self::Deposit),
             "WITHDRAW" => Ok(Self::Withdraw),
-            _ => Err(AppError::validation(format!("Unsupported payment type: {value}"))),
+            _ => Err(AppError::validation(format!(
+                "Unsupported payment type: {value}"
+            ))),
         }
     }
 }
@@ -254,7 +267,9 @@ impl PaymentStatus {
             "COMPLETED" => Ok(Self::Completed),
             "FAILED" => Ok(Self::Failed),
             "EXPIRED" => Ok(Self::Expired),
-            _ => Err(AppError::validation(format!("Unsupported payment status: {value}"))),
+            _ => Err(AppError::validation(format!(
+                "Unsupported payment status: {value}"
+            ))),
         }
     }
 }
@@ -413,7 +428,7 @@ mod tests {
 
     #[test]
     fn money_arithmetic_requires_same_currency() {
-        let kes_100 = Money::new(100_00, Currency::KES);
+        let kes_100 = Money::new(10_000, Currency::KES);
         let usdc_1 = Money::new(1_000_000, Currency::USDC);
         assert!(kes_100.checked_add(usdc_1).is_none());
         assert!(kes_100.checked_sub(usdc_1).is_none());
@@ -421,14 +436,14 @@ mod tests {
 
     #[test]
     fn money_arithmetic_matches_currency() {
-        let a = Money::new(100_00, Currency::KES);
-        let b = Money::new(50_00, Currency::KES);
-        assert_eq!(a.checked_sub(b).unwrap(), Money::new(50_00, Currency::KES));
+        let a = Money::new(10_000, Currency::KES);
+        let b = Money::new(5_000, Currency::KES);
+        assert_eq!(a.checked_sub(b).unwrap(), Money::new(5_000, Currency::KES));
     }
 
     #[test]
     fn money_display_shows_currency() {
-        assert_eq!(Money::new(100_00, Currency::KES).to_string(), "100.00 KES");
+        assert_eq!(Money::new(10_000, Currency::KES).to_string(), "100.00 KES");
     }
 
     #[test]

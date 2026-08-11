@@ -8,8 +8,7 @@ use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
 use pan_africa_pay_domain::types::{
-    Currency, Money, Payment, PaymentId, PaymentStatus, PaymentType, Rail, UserId, Wallet,
-    WalletId,
+    Currency, Money, Payment, PaymentId, PaymentStatus, PaymentType, Rail, UserId, Wallet, WalletId,
 };
 
 /// Row representation of the `payments` table.
@@ -43,8 +42,7 @@ impl TryFrom<PaymentRow> for Payment {
         Ok(Self {
             id: PaymentId(row.id),
             user_id: UserId(row.user_id),
-            payment_type: PaymentType::parse(&row.payment_type)
-                .map_err(|e| e.message)?,
+            payment_type: PaymentType::parse(&row.payment_type).map_err(|e| e.message)?,
             rail: Rail::parse(&row.rail).map_err(|e| e.message)?,
             status: PaymentStatus::parse(&row.status).map_err(|e| e.message)?,
             amount: Money::new(row.amount, currency),

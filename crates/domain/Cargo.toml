@@ -11,7 +11,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true, features = ["v4", "v7", "serde", "fast-rng"] }
-rust-decimal = { workspace = true, features = ["serde"] }
+rust_decimal = { workspace = true, features = ["serde"] }
 chrono = { workspace = true, features = ["serde"] }
 blake3 = { workspace = true }
 async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true }

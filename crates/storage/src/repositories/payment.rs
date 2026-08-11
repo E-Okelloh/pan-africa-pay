@@ -68,13 +68,12 @@ impl PaymentRepository for PaymentRepo {
     }
 
     async fn get_payment_by_idempotency_key(&self, key: &str) -> AppResult<Option<Payment>> {
-        let row = sqlx::query_as::<_, PaymentRow>(
-            "SELECT * FROM payments WHERE idempotency_key = $1",
-        )
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| map_sql_error("select payment by idempotency key", &e))?;
+        let row =
+            sqlx::query_as::<_, PaymentRow>("SELECT * FROM payments WHERE idempotency_key = $1")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| map_sql_error("select payment by idempotency key", &e))?;
         row.map(Payment::try_from)
             .transpose()
             .map_err(|e| AppError::internal(format!("corrupt payment row: {e}")))
@@ -108,7 +107,11 @@ impl PaymentRepository for PaymentRepo {
         Ok(())
     }
 
-    async fn attach_callback_payload(&self, id: PaymentId, payload: serde_json::Value) -> AppResult<()> {
+    async fn attach_callback_payload(
+        &self,
+        id: PaymentId,
+        payload: serde_json::Value,
+    ) -> AppResult<()> {
         sqlx::query("UPDATE payments SET callback_payload = $2, updated_at = NOW() WHERE id = $1")
             .bind(id.0)
             .bind(payload)
@@ -118,7 +121,12 @@ impl PaymentRepository for PaymentRepo {
         Ok(())
     }
 
-    async fn list_payments_by_user(&self, user_id: UserId, limit: i64, offset: i64) -> AppResult<Vec<Payment>> {
+    async fn list_payments_by_user(
+        &self,
+        user_id: UserId,
+        limit: i64,
+        offset: i64,
+    ) -> AppResult<Vec<Payment>> {
         let rows = sqlx::query_as::<_, PaymentRow>(
             r#"
             SELECT * FROM payments

@@ -15,6 +15,8 @@ pub mod types;
 
 pub use error::{AppError, AppResult, ErrorCode};
 pub use events::DomainEvent;
-pub use idempotency::{IdempotencyKey, IdempotencyRecord, RequestHash};
-pub use traits::{EventPublisher, IdempotencyRepository, PaymentRepository, WalletRepository};
+pub use idempotency::{IdempotencyKey, RequestHash, StoredIdempotencyRecord};
+pub use traits::{
+    EventPublisher, IdempotencyRecord, IdempotencyRepository, PaymentRepository, WalletRepository,
+};
 pub use types::*;

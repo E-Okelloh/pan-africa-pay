@@ -22,5 +22,5 @@ pub mod pool;
 pub mod repositories;
 
 pub use models::{PaymentRow, WalletRow};
-pub use pool::{DatabaseConfig, DatabasePool, build_pool};
+pub use pool::{DatabaseConfig, DatabasePool};
 pub use repositories::Repositories;

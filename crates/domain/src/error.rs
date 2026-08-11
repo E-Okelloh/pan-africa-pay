@@ -63,7 +63,10 @@ impl AppError {
             self.context = serde_json::json!({});
         }
         if let serde_json::Value::Object(ref mut map) = self.context {
-            map.insert(key.to_string(), serde_json::to_value(value).unwrap_or(serde_json::Value::Null));
+            map.insert(
+                key.to_string(),
+                serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+            );
         }
         self
     }
@@ -81,7 +84,10 @@ impl AppError {
 
     /// Not found error helper.
     pub fn not_found(resource: impl Into<String>) -> Self {
-        Self::new(ErrorCode::NotFound, format!("{} not found", resource.into()))
+        Self::new(
+            ErrorCode::NotFound,
+            format!("{} not found", resource.into()),
+        )
     }
 
     /// Conflict error helper.
@@ -98,14 +104,21 @@ impl AppError {
 
     /// External API error helper.
     pub fn external_api(provider: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::new(ErrorCode::ExternalApiError, format!("{} error: {}", provider.into(), message.into()))
-            .with_context("provider", provider.into())
+        let provider = provider.into();
+        Self::new(
+            ErrorCode::ExternalApiError,
+            format!("{provider} error: {}", message.into()),
+        )
+        .with_context("provider", provider)
     }
 
     /// Idempotency conflict helper.
     pub fn idempotency_conflict(key: &str) -> Self {
-        Self::new(ErrorCode::IdempotencyConflict, "Idempotency key used with different request")
-            .with_context("idempotency_key", key)
+        Self::new(
+            ErrorCode::IdempotencyConflict,
+            "Idempotency key used with different request",
+        )
+        .with_context("idempotency_key", key)
     }
 
     /// Idempotency expired helper.

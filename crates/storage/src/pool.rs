@@ -4,8 +4,7 @@
 //! and service layers never deal with connection details directly.
 
 use deadpool_redis::Pool as RedisPool;
-use redis::ConnectionManager;
-use sqlx::pg::PgPoolOptions;
+use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::time::Duration;
 use tracing::info;
@@ -81,7 +80,9 @@ impl DatabasePool {
             .await
             .map_err(|e| AppError::service_unavailable(format!("redis unhealthy: {e}")))?;
         if pong != "PONG" {
-            return Err(AppError::service_unavailable("redis returned unexpected PING response"));
+            return Err(AppError::service_unavailable(
+                "redis returned unexpected PING response",
+            ));
         }
         Ok(())
     }
@@ -99,14 +100,10 @@ async fn connect_pg(config: &DatabaseConfig) -> AppResult<PgPool> {
 
 /// Build the Redis connection pool using the deadpool-managed pool.
 async fn connect_redis(config: &DatabaseConfig) -> AppResult<RedisPool> {
-    let client = redis::Client::open(config.redis_url.clone())
+    let manager = deadpool_redis::Manager::new(config.redis_url.clone())
         .map_err(|e| AppError::configuration(format!("invalid redis url: {e}")))?;
-    let manager: ConnectionManager = client
-        .get_connection_manager()
-        .await
-        .map_err(|e| AppError::configuration(format!("failed to connect to redis: {e}")))?;
-    let pool = RedisPool::builder(manager)
+    RedisPool::builder(manager)
         .max_size(config.redis_max_connections)
-        .build();
-    Ok(pool)
+        .build()
+        .map_err(|e| AppError::configuration(format!("failed to build redis pool: {e}")))
 }

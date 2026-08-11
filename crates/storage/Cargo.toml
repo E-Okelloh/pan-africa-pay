@@ -8,9 +8,10 @@ rust-version = { workspace = true }
 
 [dependencies]
 pan-africa-pay-domain = { path = "../domain" }
+async-trait = "0.1"
 sqlx = { workspace = true }
 redis = { workspace = true }
-deadpool = { workspace = true }
+deadpool-redis = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
