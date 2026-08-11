@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/pan_africa_pay
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  fmt:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --check --workspace
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Start services
+        run: docker compose up -d postgres redis
+      - name: Wait for services
+        run: |
+          sleep 5
+          until docker exec pan_africa_pay_postgres pg_isready -U postgres; do sleep 1; done
+          until docker exec pan_africa_pay_redis redis-cli ping; do sleep 1; done
+      - name: Run migrations
+        run: cargo sqlx migrate run --source crates/storage/migrations
+      - name: Run tests
+        run: cargo test --workspace
+      - name: Stop services
+        run: docker compose down
+
+  sqlx:
+    name: SQLx Prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --version 0.8 --locked --no-default-features --features postgres
+      - name: Check SQLx offline
+        run: cargo sqlx prepare --workspace --check
+
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --workspace --release
