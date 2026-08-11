@@ -28,13 +28,13 @@ chrono = { version = "0.4", features = ["serde"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "rust_decimal", "json"] }
 redis = { version = "1.5", features = ["tokio-comp", "connection-manager"] }
 deadpool-redis = { version = "0.23", features = ["rt_tokio_1"] }
-axum = { version = "0.7", features = ["extra-headers"] }
+axum = { version = "0.7", features = ["json", "tracing", "query"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["trace", "cors", "classify"] }
+tower-http = { version = "0.5", features = ["trace", "cors", "catch-panic"] }
 governor = { version = "0.6", features = ["axum"] }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "decimal", "uuid"] }
 utoipa-swagger-ui = "5"
-figment = { version = "0.12", features = ["serde", "toml", "env"] }
+figment = { version = "0.10", features = ["toml", "env"] }
 secrecy = "0.8"
 zeroize = "1.8"
 blake3 = "1.7"
