@@ -1430,6 +1430,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chrono",
+ "dotenvy",
  "pan-africa-pay-domain",
  "parking_lot",
  "rand 0.8.7",

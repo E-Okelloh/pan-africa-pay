@@ -240,3 +240,53 @@ async fn provider_rejection_returns_provider_error() {
         Err(pan_africa_pay_mpesa::MpesaError::Provider { .. })
     ));
 }
+
+#[tokio::test]
+async fn stk_query_returns_result_status() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/oauth/v1/generate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "mock-access-token",
+            "expires_in": 3600,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Query endpoint: assert the fixed business fields; the signed
+    // password/timestamp vary per call, and `CheckoutRequestID` is
+    // passed through verbatim.
+    let expected = serde_json::json!({
+        "BusinessShortCode": "174379",
+        "CheckoutRequestID": "ws_CO_191220191020363925",
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/mpesa/stkpushquery/v1/query"))
+        .and(body_partial_json(expected))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ResponseCode": "0",
+            "ResponseDescription": "The service request has been processed successfully",
+            "MerchantRequestID": "m1",
+            "CheckoutRequestID": "ws_CO_191220191020363925",
+            "ResultCode": "0",
+            "ResultDesc": "The service request is processed successfully.",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = MpesaClient::new(config(&server.uri())).expect("client");
+    let status = client
+        .stk_query("ws_CO_191220191020363925")
+        .await
+        .expect("query");
+
+    assert_eq!(status.result_code.as_deref(), Some("0"));
+    assert_eq!(
+        status.checkout_request_id.as_deref(),
+        Some("ws_CO_191220191020363925")
+    );
+}

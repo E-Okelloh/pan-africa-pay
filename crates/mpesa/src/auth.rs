@@ -16,6 +16,32 @@ use tracing::debug;
 use crate::config::Environment;
 use crate::error::{MpesaError, MpesaResult};
 
+/// Deserialize an optional integer that Daraja occasionally sends as a
+/// string (`"expires_in": "3599"`).
+fn de_string_or_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use serde::Deserialize;
+
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| D::Error::custom(format!("expires_in is not a valid u64: {n}"))),
+        Some(serde_json::Value::String(s)) => s
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("expires_in is not a valid u64: {s:?}"))),
+        Some(other) => Err(D::Error::custom(format!(
+            "expires_in has unexpected type: {other}"
+        ))),
+    }
+}
+
 /// Threshold: refresh the token when less than this fraction of its
 /// lifetime remains.
 const REFRESH_EARLY_FRACTION: f64 = 0.9;
@@ -114,6 +140,7 @@ impl TokenCache {
         #[derive(serde::Deserialize)]
         struct TokenResponse {
             access_token: String,
+            #[serde(default, deserialize_with = "de_string_or_u64")]
             expires_in: Option<u64>,
         }
 
@@ -209,5 +236,27 @@ mod tests {
     fn token_cache_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<TokenCache>();
+    }
+
+    #[test]
+    fn token_response_accepts_string_or_number_expires_in() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct TokenResponse {
+            #[serde(default, deserialize_with = "super::de_string_or_u64")]
+            expires_in: Option<u64>,
+        }
+
+        let from_string: TokenResponse =
+            serde_json::from_str(r#"{"expires_in":"3599"}"#).expect("string form");
+        assert_eq!(from_string.expires_in, Some(3599));
+
+        let from_number: TokenResponse =
+            serde_json::from_str(r#"{"expires_in":3600}"#).expect("number form");
+        assert_eq!(from_number.expires_in, Some(3600));
+
+        let missing: TokenResponse = serde_json::from_str(r#"{}"#).expect("absent");
+        assert_eq!(missing.expires_in, None);
     }
 }
