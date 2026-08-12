@@ -95,6 +95,35 @@ impl PaymentRepository for PaymentRepo {
             .map_err(|e| AppError::internal(format!("corrupt payment row: {e}")))
     }
 
+    async fn list_payments_for_reconciliation(
+        &self,
+        statuses: &[PaymentStatus],
+        stale_minutes: i64,
+        limit: i64,
+    ) -> AppResult<Vec<Payment>> {
+        let status_strs: Vec<String> = statuses.iter().map(serde_enum).collect();
+        let rows = sqlx::query_as::<_, PaymentRow>(
+            r#"
+            SELECT * FROM payments
+            WHERE status = ANY($1)
+              AND updated_at < NOW() - make_interval(mins => $2)
+            ORDER BY updated_at ASC
+            LIMIT $3
+            "#,
+        )
+        .bind(&status_strs)
+        .bind(stale_minutes)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| map_sql_error("list payments for reconciliation", &e))?;
+
+        rows.into_iter()
+            .map(Payment::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::internal(format!("corrupt payment row: {e}")))
+    }
+
     async fn update_payment_status(
         &self,
         id: PaymentId,

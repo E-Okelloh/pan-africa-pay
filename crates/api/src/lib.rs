@@ -11,5 +11,6 @@
 pub mod config;
 pub mod error;
 pub mod idempotency;
+pub mod reconciliation;
 pub mod routes;
 pub mod state;

@@ -70,7 +70,9 @@ The payin endpoint performs automatic rail routing: `KES` amounts go
 through M-Pesa STK push, `USDC` amounts through a Kotani Pay deposit
 (with automatic customer registration on first use). Webhooks reconcile
 payments to `COMPLETED`/`FAILED` and attach the provider callback
-payload for audit.
+payload for audit. A reconciliation sweeper additionally polls provider
+status endpoints every minute and settles payments stuck in
+`PENDING`/`PROCESSING` whose callback was missed.
 
 Every mutating endpoint accepts an optional `Idempotency-Key` header
 (URL-safe, max 128 chars): retries with the same key and body replay
@@ -101,4 +103,4 @@ crates/
 |-------|-------|--------|
 | 1 | Foundation: workspace, domain core, storage | Done |
 | 2 | Provider integrations and HTTP API | Done |
-| 3 | Dual-rail flows and reconciliation | In progress |
+| 3 | Dual-rail flows and reconciliation | Done |

@@ -53,6 +53,15 @@ pub trait PaymentRepository: Send + Sync {
         limit: i64,
         offset: i64,
     ) -> AppResult<Vec<Payment>>;
+
+    /// List payments awaiting reconciliation: matching any status,
+    /// untouched for at least `stale_minutes`.
+    async fn list_payments_for_reconciliation(
+        &self,
+        statuses: &[PaymentStatus],
+        stale_minutes: i64,
+        limit: i64,
+    ) -> AppResult<Vec<Payment>>;
 }
 
 /// Persistence for platform users.
@@ -209,6 +218,22 @@ mod tests {
                     .values()
                     .find(|p| p.mpesa_checkout_request_id.as_deref() == Some(checkout_request_id))
                     .cloned())
+            }
+
+            async fn list_payments_for_reconciliation(
+                &self,
+                statuses: &[PaymentStatus],
+                _stale_minutes: i64,
+                _limit: i64,
+            ) -> AppResult<Vec<Payment>> {
+                Ok(self
+                    .payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
+                    .values()
+                    .filter(|p| statuses.contains(&p.status))
+                    .cloned()
+                    .collect())
             }
 
             async fn update_payment_status(

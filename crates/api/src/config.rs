@@ -75,6 +75,25 @@ impl Default for LoggingConfig {
     }
 }
 
+/// Reconciliation sweeper settings.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SweepConfig {
+    /// Seconds between sweep passes.
+    pub interval_secs: u64,
+    /// Minutes a payment must be untouched before it is reconciled.
+    pub stale_minutes: i64,
+}
+
+impl Default for SweepConfig {
+    fn default() -> Self {
+        Self {
+            interval_secs: crate::reconciliation::DEFAULT_SWEEP_INTERVAL_SECS,
+            stale_minutes: crate::reconciliation::DEFAULT_STALE_MINUTES,
+        }
+    }
+}
+
 /// Top-level application configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -87,6 +106,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     /// Logging settings.
     pub logging: LoggingConfig,
+    /// Reconciliation sweeper settings.
+    pub sweep: SweepConfig,
     /// M-Pesa Daraja provider settings.
     pub mpesa: MpesaConfig,
     /// Kotani Pay provider settings.

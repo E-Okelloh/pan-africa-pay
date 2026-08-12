@@ -496,6 +496,22 @@ impl pan_africa_pay_domain::traits::PaymentRepository for MemoryPaymentRepo {
     ) -> pan_africa_pay_domain::error::AppResult<Vec<pan_africa_pay_domain::types::Payment>> {
         Ok(vec![])
     }
+
+    async fn list_payments_for_reconciliation(
+        &self,
+        statuses: &[pan_africa_pay_domain::types::PaymentStatus],
+        _stale_minutes: i64,
+        _limit: i64,
+    ) -> pan_africa_pay_domain::error::AppResult<Vec<pan_africa_pay_domain::types::Payment>> {
+        Ok(self
+            .payments
+            .lock()
+            .expect("lock")
+            .values()
+            .filter(|p| statuses.contains(&p.status))
+            .cloned()
+            .collect())
+    }
 }
 
 /// In-memory user repository for router tests.

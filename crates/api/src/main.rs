@@ -27,8 +27,21 @@ async fn main() -> anyhow::Result<()> {
 
     let bind_host = config.server.host.clone();
     let bind_port = config.server.port;
-    let state = AppState::new(config).await?;
+    let state = AppState::new(config.clone()).await?;
     state.run_migrations().await?;
+
+    // Spawn the reconciliation sweeper (settles payments whose provider
+    // callback was missed).
+    let sweeper = pan_africa_pay_api::reconciliation::ReconciliationSweeper::new(
+        state.payments.clone(),
+        state.mpesa.clone(),
+        state.kotani.clone(),
+        config.sweep.interval_secs,
+        config.sweep.stale_minutes,
+    );
+    tokio::spawn(async move {
+        sweeper.run().await;
+    });
 
     let app = build_router(state);
     let addr = SocketAddr::new(
