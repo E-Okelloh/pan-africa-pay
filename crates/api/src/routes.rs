@@ -21,10 +21,22 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health::health_check))
         .route("/health/ready", get(health::ready_check))
         .route("/mpesa/stk/push", post(mpesa::stk_push))
+        .route(
+            "/mpesa/stk/query/{checkout_request_id}",
+            get(mpesa::stk_query),
+        )
         .route("/webhooks/mpesa", post(mpesa::webhook))
         .route("/kotani/customers", post(kotani::create_customer))
         .route("/kotani/deposit", post(kotani::deposit))
         .route("/kotani/withdraw", post(kotani::withdraw))
+        .route(
+            "/kotani/deposit/status/{reference_id}",
+            get(kotani::deposit_status),
+        )
+        .route(
+            "/kotani/withdraw/status/{reference_id}",
+            get(kotani::withdraw_status),
+        )
         .route("/webhooks/kotani", post(kotani::webhook))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())

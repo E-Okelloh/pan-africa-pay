@@ -48,6 +48,25 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+## API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/mpesa/stk/push` | Initiate an M-Pesa STK push prompt |
+| `GET` | `/mpesa/stk/query/{checkout_request_id}` | Poll STK push status |
+| `POST` | `/kotani/customers` | Register a mobile money customer |
+| `POST` | `/kotani/deposit` | Initiate fiat -> stablecoin deposit |
+| `POST` | `/kotani/withdraw` | Initiate stablecoin -> fiat payout |
+| `GET` | `/kotani/deposit/status/{reference_id}` | Poll deposit status |
+| `GET` | `/kotani/withdraw/status/{reference_id}` | Poll withdrawal status |
+| `POST` | `/webhooks/mpesa` | Daraja STK callback |
+| `POST` | `/webhooks/kotani` | Signed Kotani transaction callback |
+
+Every mutating endpoint accepts an optional `Idempotency-Key` header
+(URL-safe, max 128 chars): retries with the same key and body replay
+the original response; a different body with the same key returns `409
+IDEMPOTENCY_CONFLICT`. Records live in Redis with a PostgreSQL fallback.
+
 ## Repository Layout
 
 ```
@@ -70,6 +89,6 @@ crates/
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 1 | Foundation: workspace, domain core, storage | In progress |
-| 2 | Provider integrations and HTTP API | Planned |
+| 1 | Foundation: workspace, domain core, storage | Done |
+| 2 | Provider integrations and HTTP API | In progress |
 | 3 | Dual-rail flows and reconciliation | Planned |

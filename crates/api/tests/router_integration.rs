@@ -12,6 +12,7 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 use pan_africa_pay_api::config::{AppConfig, Environment, LoggingConfig, ServerConfig};
+use pan_africa_pay_api::idempotency::IdempotencyService;
 use pan_africa_pay_api::routes::build_router;
 use pan_africa_pay_api::state::AppState;
 use pan_africa_pay_storage::DatabasePool;
@@ -42,9 +43,15 @@ fn test_state() -> AppState {
         .expect("redis manager");
     AppState {
         config: std::sync::Arc::new(config),
-        pool: DatabasePool { pg, redis },
+        pool: DatabasePool {
+            pg: pg.clone(),
+            redis: redis.clone(),
+        },
         mpesa: None,
         kotani: None,
+        idempotency: IdempotencyService::new(std::sync::Arc::new(
+            pan_africa_pay_storage::repositories::idempotency::IdempotencyRepo::new(pg, redis),
+        )),
     }
 }
 
@@ -206,6 +213,178 @@ async fn webhook_with_invalid_body_returns_400() {
                 .uri("/webhooks/mpesa")
                 .header("content-type", "application/json")
                 .body(Body::from("not json"))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// In-memory idempotency repository for router tests (no Redis needed).
+#[derive(Default)]
+struct MemoryIdempotencyRepo {
+    records: std::sync::Mutex<
+        std::collections::HashMap<String, pan_africa_pay_domain::traits::IdempotencyRecord>,
+    >,
+}
+
+#[async_trait::async_trait]
+impl pan_africa_pay_domain::traits::IdempotencyRepository for MemoryIdempotencyRepo {
+    async fn store(
+        &self,
+        key: &str,
+        request_hash: &str,
+        response_body: serde_json::Value,
+        status_code: u16,
+        _ttl_secs: u64,
+    ) -> pan_africa_pay_domain::error::AppResult<
+        Option<pan_africa_pay_domain::traits::IdempotencyRecord>,
+    > {
+        let mut records = self.records.lock().expect("lock");
+        if let Some(existing) = records.get(key) {
+            if existing.request_hash != request_hash {
+                return Ok(Some(existing.clone()));
+            }
+            return Ok(None);
+        }
+        records.insert(
+            key.to_string(),
+            pan_africa_pay_domain::traits::IdempotencyRecord {
+                key: key.to_string(),
+                request_hash: request_hash.to_string(),
+                response_body,
+                status_code,
+            },
+        );
+        Ok(None)
+    }
+
+    async fn get(
+        &self,
+        key: &str,
+    ) -> pan_africa_pay_domain::error::AppResult<
+        Option<pan_africa_pay_domain::traits::IdempotencyRecord>,
+    > {
+        Ok(self.records.lock().expect("lock").get(key).cloned())
+    }
+}
+
+/// State whose idempotency service uses an in-memory repository.
+fn state_with_idempotency(repo: std::sync::Arc<MemoryIdempotencyRepo>) -> AppState {
+    let mut state = test_state();
+    state.idempotency = IdempotencyService::new(repo);
+    state
+}
+
+#[tokio::test]
+async fn deposit_with_idempotency_key_replays_stored_response() {
+    use pan_africa_pay_domain::idempotency::RequestHash;
+
+    let payload = serde_json::json!({
+        "customer_key": "customer-key-123",
+        "amount": 10.0,
+        "wallet_id": "wallet-1",
+        "reference_id": "ref-dep-1",
+        "currency": "USD"
+    });
+    let hash = RequestHash::compute_bytes(payload.to_string().as_bytes());
+
+    let repo = std::sync::Arc::new(MemoryIdempotencyRepo::default());
+    repo.records.lock().expect("lock").insert(
+        "k1".to_string(),
+        pan_africa_pay_domain::traits::IdempotencyRecord {
+            key: "k1".to_string(),
+            request_hash: hash.as_str().to_string(),
+            response_body: serde_json::json!({"data": {"reference_id": "stored-ref-dep-1"}}),
+            status_code: 200,
+        },
+    );
+
+    let app = build_router(state_with_idempotency(repo));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/kotani/deposit")
+                .header("content-type", "application/json")
+                .header("idempotency-key", "k1")
+                .body(Body::from(payload.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+    assert_eq!(json["data"]["reference_id"], "stored-ref-dep-1");
+}
+
+#[tokio::test]
+async fn deposit_with_conflicting_idempotency_key_returns_409() {
+    use pan_africa_pay_domain::idempotency::RequestHash;
+
+    let repo = std::sync::Arc::new(MemoryIdempotencyRepo::default());
+    repo.records.lock().expect("lock").insert(
+        "k2".to_string(),
+        pan_africa_pay_domain::traits::IdempotencyRecord {
+            key: "k2".to_string(),
+            request_hash: RequestHash::compute_bytes(b"{\"different\":true}")
+                .as_str()
+                .to_string(),
+            response_body: serde_json::json!({"data": {}}),
+            status_code: 200,
+        },
+    );
+
+    let app = build_router(state_with_idempotency(repo));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/kotani/deposit")
+                .header("content-type", "application/json")
+                .header("idempotency-key", "k2")
+                .body(Body::from(
+                    r#"{"customer_key":"c1","amount":10.0,"wallet_id":"w1","reference_id":"r1"}"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+    assert_eq!(json["error"]["code"], "IDEMPOTENCY_CONFLICT");
+}
+
+#[tokio::test]
+async fn invalid_idempotency_key_returns_400() {
+    let app = build_router(state_with_idempotency(std::sync::Arc::new(
+        MemoryIdempotencyRepo::default(),
+    )));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/kotani/deposit")
+                .header("content-type", "application/json")
+                .header("idempotency-key", "bad key with spaces")
+                .body(Body::from(
+                    r#"{"customer_key":"c1","amount":10.0,"wallet_id":"w1","reference_id":"r1"}"#,
+                ))
                 .expect("request"),
         )
         .await

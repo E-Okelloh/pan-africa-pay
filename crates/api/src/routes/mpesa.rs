@@ -1,18 +1,23 @@
-//! M-Pesa endpoints: STK push initiation and the Daraja callback webhook.
+//! M-Pesa endpoints: STK push initiation, status query, and the Daraja
+//! callback webhook.
 
-use axum::extract::State;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use pan_africa_pay_domain::idempotency::RequestHash;
 use pan_africa_pay_mpesa::types::StkPushRequest;
 use tracing::info;
 
 use crate::error::{ApiError, ApiResult};
+use crate::idempotency::{claim_or_replay, IdempotencyHeader};
 use crate::routes::{ok, OkEnvelope};
 use crate::state::AppState;
 
 /// Body accepted by `POST /mpesa/stk/push`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StkPushPayload {
     /// Amount in KES (whole number string, e.g. `"150"`).
     pub amount: String,
@@ -30,12 +35,22 @@ fn default_transaction_desc() -> String {
 }
 
 /// Initiate an STK push prompt on the customer's phone.
+///
+/// Accepts an optional `Idempotency-Key` header: retries with the same
+/// key and body replay the original response.
 pub async fn stk_push(
     State(state): State<AppState>,
-    Json(payload): Json<StkPushPayload>,
-) -> ApiResult<Json<OkEnvelope<StkPushAck>>> {
+    header: IdempotencyHeader,
+    body: axum::body::Bytes,
+) -> ApiResult<Response> {
+    let payload: StkPushPayload = parse_json(&body)?;
     validate_phone(&payload.phone_number)?;
     validate_amount(&payload.amount)?;
+
+    let hash = RequestHash::compute_bytes(&body);
+    if let Some(response) = claim_or_replay(&state.idempotency, header.clone(), &hash).await? {
+        return Ok(response);
+    }
 
     let client = state.mpesa.as_ref().ok_or_else(|| {
         ApiError::from(pan_africa_pay_domain::error::AppError::configuration(
@@ -58,12 +73,48 @@ pub async fn stk_push(
     };
 
     let ack = client.stk_push(&request).await?;
-    Ok(ok(StkPushAck {
-        merchant_request_id: ack.merchant_request_id,
-        checkout_request_id: ack.checkout_request_id,
-        response_code: ack.response_code,
-        response_description: ack.response_description,
+    let body = serde_json::to_value(OkEnvelope {
+        data: StkPushAck {
+            merchant_request_id: ack.merchant_request_id,
+            checkout_request_id: ack.checkout_request_id,
+            response_code: ack.response_code,
+            response_description: ack.response_description,
+        },
+    })
+    .expect("serializable ack");
+    if let Some(key) = header.0 {
+        state
+            .idempotency
+            .complete(&key, &hash, body.clone(), StatusCode::OK.as_u16())
+            .await?;
+    }
+    Ok((StatusCode::OK, Json(body)).into_response())
+}
+
+/// Query the status of an STK push by its checkout request id.
+pub async fn stk_query(
+    State(state): State<AppState>,
+    Path(checkout_request_id): Path<String>,
+) -> ApiResult<Json<OkEnvelope<StkQueryAck>>> {
+    let client = state.mpesa.as_ref().ok_or_else(|| {
+        ApiError::from(pan_africa_pay_domain::error::AppError::configuration(
+            "M-Pesa is not configured",
+        ))
+    })?;
+    let result = client.stk_query(&checkout_request_id).await?;
+    Ok(ok(StkQueryAck {
+        checkout_request_id: result.checkout_request_id,
+        result_code: result.result_code,
+        result_desc: result.result_desc,
     }))
+}
+
+/// Acknowledgement for an STK query.
+#[derive(Debug, Clone, Serialize)]
+pub struct StkQueryAck {
+    pub checkout_request_id: Option<String>,
+    pub result_code: Option<String>,
+    pub result_desc: Option<String>,
 }
 
 /// Acknowledgement returned to the API caller.
@@ -193,6 +244,16 @@ pub async fn webhook(
         result_code: 0,
         result_desc: "Success".to_string(),
     }))
+}
+
+/// Deserialize a request body, mapping JSON failures to 400 validation
+/// errors (replaces the axum `Json` rejection path).
+fn parse_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> ApiResult<T> {
+    serde_json::from_slice(body).map_err(|err| {
+        ApiError::from(pan_africa_pay_domain::error::AppError::validation(format!(
+            "invalid JSON body: {err}"
+        )))
+    })
 }
 
 #[cfg(test)]

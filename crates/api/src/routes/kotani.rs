@@ -2,15 +2,19 @@
 //! and the signed webhook for transaction callbacks.
 
 use axum::body::Bytes;
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use pan_africa_pay_domain::idempotency::RequestHash;
 use pan_africa_pay_kotani::types::{CustomerRequest, DepositRequest, WithdrawRequest};
 
 use crate::error::{ApiError, ApiResult};
+use crate::idempotency::{claim_or_replay, IdempotencyHeader};
 use crate::routes::{ok, OkEnvelope};
 use crate::state::AppState;
 
@@ -18,7 +22,7 @@ use crate::state::AppState;
 const SIGNATURE_HEADER: &str = "x-kotani-signature";
 
 /// Body accepted by `POST /kotani/customers`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CreateCustomerPayload {
     /// E.164 phone number, e.g. `+254712345678`.
     pub phone_number: String,
@@ -33,7 +37,7 @@ pub struct CreateCustomerPayload {
 }
 
 /// Body accepted by `POST /kotani/deposit`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DepositPayload {
     /// Customer key returned at registration.
     pub customer_key: String,
@@ -47,7 +51,7 @@ pub struct DepositPayload {
 }
 
 /// Body accepted by `POST /kotani/withdraw`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WithdrawPayload {
     pub customer_key: String,
     pub amount: f64,
@@ -88,10 +92,17 @@ pub struct WithdrawAck {
 /// Register a mobile money customer with Kotani.
 pub async fn create_customer(
     State(state): State<AppState>,
-    Json(payload): Json<CreateCustomerPayload>,
-) -> ApiResult<Json<OkEnvelope<CustomerAck>>> {
+    header: IdempotencyHeader,
+    body: Bytes,
+) -> ApiResult<Response> {
+    let payload: CreateCustomerPayload = parse_json(&body)?;
     validate_phone(&payload.phone_number)?;
     validate_country(&payload.country_code)?;
+
+    let hash = RequestHash::compute_bytes(&body);
+    if let Some(response) = claim_or_replay(&state.idempotency, header.clone(), &hash).await? {
+        return Ok(response);
+    }
 
     let client = kotani_client(&state)?;
     let customer = client
@@ -106,22 +117,39 @@ pub async fn create_customer(
         })
         .await?;
 
-    Ok(ok(CustomerAck {
-        id: customer.id,
-        phone_number: customer.phone_number,
-        country_code: customer.country_code,
-        network: customer.network,
-        customer_key: customer.customer_key,
-    }))
+    let body = serde_json::to_value(OkEnvelope {
+        data: CustomerAck {
+            id: customer.id,
+            phone_number: customer.phone_number,
+            country_code: customer.country_code,
+            network: customer.network,
+            customer_key: customer.customer_key,
+        },
+    })
+    .expect("serializable ack");
+    if let Some(key) = header.0 {
+        state
+            .idempotency
+            .complete(&key, &hash, body.clone(), StatusCode::OK.as_u16())
+            .await?;
+    }
+    Ok((StatusCode::OK, Json(body)).into_response())
 }
 
 /// Initiate a deposit (fiat -> stablecoin).
 pub async fn deposit(
     State(state): State<AppState>,
-    Json(payload): Json<DepositPayload>,
-) -> ApiResult<Json<OkEnvelope<DepositAck>>> {
+    header: IdempotencyHeader,
+    body: Bytes,
+) -> ApiResult<Response> {
+    let payload: DepositPayload = parse_json(&body)?;
     validate_amount(payload.amount)?;
     validate_reference(&payload.reference_id)?;
+
+    let hash = RequestHash::compute_bytes(&body);
+    if let Some(response) = claim_or_replay(&state.idempotency, header.clone(), &hash).await? {
+        return Ok(response);
+    }
 
     let client = kotani_client(&state)?;
     let response = client
@@ -135,21 +163,38 @@ pub async fn deposit(
         })
         .await?;
 
-    Ok(ok(DepositAck {
-        id: response.id,
-        reference_id: response.reference_id,
-        reference_number: response.reference_number,
-        redirect_url: response.redirect_url,
-    }))
+    let body = serde_json::to_value(OkEnvelope {
+        data: DepositAck {
+            id: response.id,
+            reference_id: response.reference_id,
+            reference_number: response.reference_number,
+            redirect_url: response.redirect_url,
+        },
+    })
+    .expect("serializable ack");
+    if let Some(key) = header.0 {
+        state
+            .idempotency
+            .complete(&key, &hash, body.clone(), StatusCode::OK.as_u16())
+            .await?;
+    }
+    Ok((StatusCode::OK, Json(body)).into_response())
 }
 
 /// Initiate a withdrawal (stablecoin -> fiat).
 pub async fn withdraw(
     State(state): State<AppState>,
-    Json(payload): Json<WithdrawPayload>,
-) -> ApiResult<Json<OkEnvelope<WithdrawAck>>> {
+    header: IdempotencyHeader,
+    body: Bytes,
+) -> ApiResult<Response> {
+    let payload: WithdrawPayload = parse_json(&body)?;
     validate_amount(payload.amount)?;
     validate_reference(&payload.reference_id)?;
+
+    let hash = RequestHash::compute_bytes(&body);
+    if let Some(response) = claim_or_replay(&state.idempotency, header.clone(), &hash).await? {
+        return Ok(response);
+    }
 
     let client = kotani_client(&state)?;
     let response = client
@@ -164,11 +209,69 @@ pub async fn withdraw(
         })
         .await?;
 
-    Ok(ok(WithdrawAck {
-        id: response.id,
-        reference_id: response.reference_id,
-        reference_number: response.reference_number,
+    let body = serde_json::to_value(OkEnvelope {
+        data: WithdrawAck {
+            id: response.id,
+            reference_id: response.reference_id,
+            reference_number: response.reference_number,
+        },
+    })
+    .expect("serializable ack");
+    if let Some(key) = header.0 {
+        state
+            .idempotency
+            .complete(&key, &hash, body.clone(), StatusCode::OK.as_u16())
+            .await?;
+    }
+    Ok((StatusCode::OK, Json(body)).into_response())
+}
+
+/// Poll the status of a Kotani deposit by reference id.
+pub async fn deposit_status(
+    State(state): State<AppState>,
+    Path(reference_id): Path<String>,
+) -> ApiResult<Json<OkEnvelope<StatusAck>>> {
+    let client = kotani_client(&state)?;
+    let status = client.deposit_status(&reference_id).await?;
+    Ok(ok(StatusAck {
+        reference_id: status
+            .reference_id
+            .or(status.reference_id_camel)
+            .unwrap_or(reference_id),
+        status: status.status,
+        message: status.message,
+        amount: status.amount,
+        currency: status.currency,
     }))
+}
+
+/// Poll the status of a Kotani withdrawal by reference id.
+pub async fn withdraw_status(
+    State(state): State<AppState>,
+    Path(reference_id): Path<String>,
+) -> ApiResult<Json<OkEnvelope<StatusAck>>> {
+    let client = kotani_client(&state)?;
+    let status = client.withdraw_status(&reference_id).await?;
+    Ok(ok(StatusAck {
+        reference_id: status
+            .reference_id
+            .or(status.reference_id_camel)
+            .unwrap_or(reference_id),
+        status: status.status,
+        message: status.message,
+        amount: status.amount,
+        currency: status.currency,
+    }))
+}
+
+/// Transaction status acknowledgement.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusAck {
+    pub reference_id: String,
+    pub status: Option<String>,
+    pub message: Option<String>,
+    pub amount: Option<f64>,
+    pub currency: Option<String>,
 }
 
 /// Kotani transaction callback.
@@ -292,6 +395,16 @@ fn validate_reference(reference: &str) -> ApiResult<()> {
     } else {
         Ok(())
     }
+}
+
+/// Deserialize a request body, mapping JSON failures to 400 validation
+/// errors (replaces the axum `Json` rejection path).
+fn parse_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> ApiResult<T> {
+    serde_json::from_slice(body).map_err(|err| {
+        ApiError::from(pan_africa_pay_domain::error::AppError::validation(format!(
+            "invalid JSON body: {err}"
+        )))
+    })
 }
 
 #[cfg(test)]

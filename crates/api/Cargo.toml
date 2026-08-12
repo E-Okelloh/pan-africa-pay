@@ -28,6 +28,7 @@ uuid = { workspace = true, features = ["v4", "v7", "serde", "fast-rng"] }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
 dotenvy = "0.15"
+async-trait = "0.1"
 
 [dev-dependencies]
 http-body-util = "0.1"

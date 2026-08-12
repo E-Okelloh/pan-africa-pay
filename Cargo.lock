@@ -1377,6 +1377,7 @@ name = "pan-africa-pay-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "deadpool-redis",
  "dotenvy",
