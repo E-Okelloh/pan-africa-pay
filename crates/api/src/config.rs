@@ -147,9 +147,14 @@ pub fn default_figment() -> Figment {
             // `raw()` keeps values as strings — without it figment would
             // infer e.g. `174379` as an integer and reject the String
             // fields of `MpesaConfig`.
-            Env::raw()
-                .prefixed("MPESA_")
-                .map(|k| format!("mpesa.{}", k.to_string().to_lowercase()).into()),
+            Env::raw().map(|k| {
+                let key = k.to_string();
+                if let Some(rest) = key.strip_prefix("MPESA_") {
+                    format!("mpesa.{}", rest.to_lowercase()).into()
+                } else {
+                    k
+                }
+            }),
         )
 }
 
