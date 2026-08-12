@@ -143,19 +143,23 @@ pub fn default_figment() -> Figment {
                 .split("_")
                 .map(|k| format!("database.redis_{}", k.to_string().to_lowercase()).into()),
         )
-        .merge(
-            // `raw()` keeps values as strings — without it figment would
-            // infer e.g. `174379` as an integer and reject the String
-            // fields of `MpesaConfig`.
-            Env::raw().map(|k| {
-                let key = k.to_string();
-                if let Some(rest) = key.strip_prefix("MPESA_") {
-                    format!("mpesa.{}", rest.to_lowercase()).into()
-                } else {
-                    k.into()
-                }
-            }),
-        )
+        .merge(mpesa_env_provider())
+}
+
+/// Environment provider for M-Pesa settings.
+///
+/// `MPESA_*` variables are surfaced as a JSON object so values like
+/// `174379` stay strings (figment would otherwise infer an integer and
+/// reject the `String` fields of `MpesaConfig`).
+fn mpesa_env_provider() -> figment::providers::Serialized<serde_json::Value> {
+    let mut mpesa = serde_json::Map::new();
+    for (key, value) in std::env::vars() {
+        if let Some(rest) = key.strip_prefix("MPESA_") {
+            mpesa.insert(rest.to_lowercase(), serde_json::Value::String(value));
+        }
+    }
+    let config = serde_json::json!({ "mpesa": serde_json::Value::Object(mpesa) });
+    figment::providers::Serialized::from(config, figment::Profile::Default)
 }
 
 #[cfg(test)]
@@ -197,12 +201,25 @@ mod tests {
     #[test]
     fn mpesa_env_vars_map_to_flat_config_fields() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::remove_var("MPESA_SHORT_CODE");
-        std::env::remove_var("MPESA_ENVIRONMENT");
-        std::env::remove_var("MPESA_BASE_URL_OVERRIDE");
+        let vars = [
+            "MPESA_CONSUMER_KEY",
+            "MPESA_CONSUMER_SECRET",
+            "MPESA_PASSKEY",
+            "MPESA_SHORT_CODE",
+            "MPESA_CALLBACK_URL",
+            "MPESA_ENVIRONMENT",
+            "MPESA_BASE_URL_OVERRIDE",
+        ];
+        for var in vars {
+            unsafe { std::env::remove_var(var) };
+        }
 
         unsafe {
+            std::env::set_var("MPESA_CONSUMER_KEY", "key");
+            std::env::set_var("MPESA_CONSUMER_SECRET", "secret");
+            std::env::set_var("MPESA_PASSKEY", "passkey");
             std::env::set_var("MPESA_SHORT_CODE", "174379");
+            std::env::set_var("MPESA_CALLBACK_URL", "https://example.com/webhooks/mpesa");
             std::env::set_var("MPESA_ENVIRONMENT", "sandbox");
             std::env::set_var("MPESA_BASE_URL_OVERRIDE", "http://localhost:9999");
         }
@@ -215,10 +232,8 @@ mod tests {
         assert_eq!(config.mpesa.base_url_override, "http://localhost:9999");
         assert!(config.mpesa.is_configured());
 
-        unsafe {
-            std::env::remove_var("MPESA_SHORT_CODE");
-            std::env::remove_var("MPESA_ENVIRONMENT");
-            std::env::remove_var("MPESA_BASE_URL_OVERRIDE");
+        for var in vars {
+            unsafe { std::env::remove_var(var) };
         }
     }
 }
