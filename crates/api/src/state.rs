@@ -2,9 +2,12 @@
 
 use std::sync::Arc;
 
+use pan_africa_pay_domain::traits::{PaymentRepository, UserRepository};
 use pan_africa_pay_kotani::KotaniClient;
 use pan_africa_pay_mpesa::MpesaClient;
 use pan_africa_pay_storage::repositories::idempotency::IdempotencyRepo;
+use pan_africa_pay_storage::repositories::payment::PaymentRepo;
+use pan_africa_pay_storage::repositories::user::UserRepo;
 use pan_africa_pay_storage::DatabasePool;
 
 use crate::config::AppConfig;
@@ -23,6 +26,10 @@ pub struct AppState {
     pub kotani: Option<KotaniClient>,
     /// Idempotency service backed by Redis + PostgreSQL.
     pub idempotency: IdempotencyService,
+    /// Payment persistence.
+    pub payments: Arc<dyn PaymentRepository>,
+    /// User persistence.
+    pub users: Arc<dyn UserRepository>,
 }
 
 impl AppState {
@@ -51,12 +58,16 @@ impl AppState {
             pool.pg.clone(),
             pool.redis.clone(),
         )));
+        let payments = Arc::new(PaymentRepo::new(pool.pg.clone()));
+        let users = Arc::new(UserRepo::new(pool.pg.clone()));
         Ok(Self {
             config: Arc::new(config),
             pool,
             mpesa,
             kotani,
             idempotency,
+            payments,
+            users,
         })
     }
 

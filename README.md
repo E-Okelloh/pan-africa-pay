@@ -61,6 +61,16 @@ cargo test --workspace
 | `GET` | `/kotani/withdraw/status/{reference_id}` | Poll withdrawal status |
 | `POST` | `/webhooks/mpesa` | Daraja STK callback |
 | `POST` | `/webhooks/kotani` | Signed Kotani transaction callback |
+| `POST` | `/payments/payin` | Dual-rail payin: `KES` -> M-Pesa, `USDC` -> Kotani |
+| `GET` | `/payments/{id}` | Fetch a payment |
+| `GET` | `/payments?user_id=...` | List a user's payments |
+| `POST` | `/users` | Create a platform user |
+
+The payin endpoint performs automatic rail routing: `KES` amounts go
+through M-Pesa STK push, `USDC` amounts through a Kotani Pay deposit
+(with automatic customer registration on first use). Webhooks reconcile
+payments to `COMPLETED`/`FAILED` and attach the provider callback
+payload for audit.
 
 Every mutating endpoint accepts an optional `Idempotency-Key` header
 (URL-safe, max 128 chars): retries with the same key and body replay
@@ -90,5 +100,5 @@ crates/
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Foundation: workspace, domain core, storage | Done |
-| 2 | Provider integrations and HTTP API | In progress |
-| 3 | Dual-rail flows and reconciliation | Planned |
+| 2 | Provider integrations and HTTP API | Done |
+| 3 | Dual-rail flows and reconciliation | In progress |

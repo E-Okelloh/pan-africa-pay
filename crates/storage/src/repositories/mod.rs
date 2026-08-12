@@ -4,6 +4,7 @@
 
 pub mod idempotency;
 pub mod payment;
+pub mod user;
 pub mod wallet;
 
 use std::sync::Arc;
@@ -17,6 +18,8 @@ pub struct Repositories {
     pub payments: Arc<payment::PaymentRepo>,
     /// Wallet persistence adapter.
     pub wallets: Arc<wallet::WalletRepo>,
+    /// User persistence adapter.
+    pub users: Arc<user::UserRepo>,
     /// Idempotency record adapter (Redis + PG).
     pub idempotency: Arc<idempotency::IdempotencyRepo>,
 }
@@ -27,6 +30,7 @@ impl Repositories {
         Self {
             payments: Arc::new(payment::PaymentRepo::new(pg.clone())),
             wallets: Arc::new(wallet::WalletRepo::new(pg.clone())),
+            users: Arc::new(user::UserRepo::new(pg.clone())),
             idempotency: Arc::new(idempotency::IdempotencyRepo::new(pg, redis_pool)),
         }
     }

@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::error::AppResult;
 use crate::events::DomainEvent;
-use crate::types::{Payment, PaymentId, PaymentStatus, UserId, Wallet, WalletId};
+use crate::types::{Payment, PaymentId, PaymentStatus, User, UserId, Wallet, WalletId};
 
 /// Persistence for payments.
 #[async_trait]
@@ -23,6 +23,12 @@ pub trait PaymentRepository: Send + Sync {
 
     /// Load a payment by its idempotency key.
     async fn get_payment_by_idempotency_key(&self, key: &str) -> AppResult<Option<Payment>>;
+
+    /// Load a payment by its M-Pesa checkout request id.
+    async fn get_payment_by_mpesa_checkout_request_id(
+        &self,
+        checkout_request_id: &str,
+    ) -> AppResult<Option<Payment>>;
 
     /// Update a payment's status, optionally attaching provider references.
     async fn update_payment_status(
@@ -47,6 +53,16 @@ pub trait PaymentRepository: Send + Sync {
         limit: i64,
         offset: i64,
     ) -> AppResult<Vec<Payment>>;
+}
+
+/// Persistence for platform users.
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    /// Create a new user.
+    async fn create_user(&self, user: &User) -> AppResult<()>;
+
+    /// Load a user by id.
+    async fn get_user(&self, id: UserId) -> AppResult<Option<User>>;
 }
 
 /// Persistence for wallets.
@@ -179,6 +195,19 @@ mod tests {
                     .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
                     .values()
                     .find(|p| p.idempotency_key == key)
+                    .cloned())
+            }
+
+            async fn get_payment_by_mpesa_checkout_request_id(
+                &self,
+                checkout_request_id: &str,
+            ) -> AppResult<Option<Payment>> {
+                Ok(self
+                    .payments
+                    .lock()
+                    .map_err(|e| AppError::internal(format!("fake repo lock poisoned: {e}")))?
+                    .values()
+                    .find(|p| p.mpesa_checkout_request_id.as_deref() == Some(checkout_request_id))
                     .cloned())
             }
 

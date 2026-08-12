@@ -79,6 +79,22 @@ impl PaymentRepository for PaymentRepo {
             .map_err(|e| AppError::internal(format!("corrupt payment row: {e}")))
     }
 
+    async fn get_payment_by_mpesa_checkout_request_id(
+        &self,
+        checkout_request_id: &str,
+    ) -> AppResult<Option<Payment>> {
+        let row = sqlx::query_as::<_, PaymentRow>(
+            "SELECT * FROM payments WHERE mpesa_checkout_request_id = $1",
+        )
+        .bind(checkout_request_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| map_sql_error("select payment by checkout request id", &e))?;
+        row.map(Payment::try_from)
+            .transpose()
+            .map_err(|e| AppError::internal(format!("corrupt payment row: {e}")))
+    }
+
     async fn update_payment_status(
         &self,
         id: PaymentId,

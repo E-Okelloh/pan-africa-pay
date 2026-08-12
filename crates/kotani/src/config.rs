@@ -25,6 +25,8 @@ pub struct KotaniConfig {
     pub webhook_secret: String,
     /// Public HTTPS URL Kotani posts callbacks to.
     pub callback_url: String,
+    /// Crypto wallet id used for deposits (from `GET /wallet/crypto`).
+    pub wallet_id: String,
     /// Request timeout in seconds.
     pub timeout_secs: u64,
 }
@@ -37,6 +39,7 @@ impl Default for KotaniConfig {
             base_url: SANDBOX_BASE_URL.to_string(),
             webhook_secret: String::new(),
             callback_url: String::new(),
+            wallet_id: String::new(),
             timeout_secs: DEFAULT_TIMEOUT_SECS,
         }
     }

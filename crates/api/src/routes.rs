@@ -11,6 +11,7 @@ use crate::state::AppState;
 mod health;
 mod kotani;
 mod mpesa;
+mod payments;
 
 /// Build the application router with all middleware applied.
 ///
@@ -38,6 +39,10 @@ pub fn build_router(state: AppState) -> Router {
             get(kotani::withdraw_status),
         )
         .route("/webhooks/kotani", post(kotani::webhook))
+        .route("/payments/payin", post(payments::payin))
+        .route("/payments/{id}", get(payments::get_payment))
+        .route("/payments", get(payments::list_payments))
+        .route("/users", post(payments::create_user))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)

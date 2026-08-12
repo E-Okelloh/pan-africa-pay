@@ -167,7 +167,7 @@ pub struct CallbackBody {
     pub stk_callback: StkCallback,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct StkCallback {
     #[serde(rename = "MerchantRequestID")]
     pub merchant_request_id: String,
@@ -181,13 +181,13 @@ pub struct StkCallback {
     pub callback_metadata: Option<CallbackMetadata>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CallbackMetadata {
     #[serde(rename = "Item", default)]
     pub item: Vec<MetadataItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MetadataItem {
     #[serde(rename = "Name")]
     pub name: String,
@@ -228,17 +228,69 @@ pub async fn webhook(
         })
         .unwrap_or_default();
 
+    let receipt = metadata
+        .iter()
+        .find(|(name, _)| name == "MpesaReceiptNumber")
+        .and_then(|(_, value)| value.as_ref().and_then(|v| v.as_str()))
+        .map(str::to_string);
+
     info!(
         provider = "mpesa",
         merchant_request_id = %callback.merchant_request_id,
         checkout_request_id = %callback.checkout_request_id,
         result_code = callback.result_code,
         result_desc = %callback.result_desc,
-        metadata = ?metadata,
         "received STK callback"
     );
 
-    let _ = &state;
+    // Reconcile: link the callback to a payment and update its status.
+    // Reconciliation is best-effort at callback time: storage failures
+    // are logged and still acknowledged, so Daraja never retries and
+    // the webhook contract (always 200) is preserved.
+    match state
+        .payments
+        .get_payment_by_mpesa_checkout_request_id(&callback.checkout_request_id)
+        .await
+    {
+        Ok(Some(payment)) => {
+            let status = if callback.result_code == 0 {
+                pan_africa_pay_domain::types::PaymentStatus::Completed
+            } else {
+                pan_africa_pay_domain::types::PaymentStatus::Failed
+            };
+            if let Err(err) = state
+                .payments
+                .update_payment_status(payment.id, status, receipt, None)
+                .await
+            {
+                tracing::error!(provider = "mpesa", "payment update failed: {err}");
+            }
+            if let Err(err) = state
+                .payments
+                .attach_callback_payload(
+                    payment.id,
+                    serde_json::to_value(callback).unwrap_or_default(),
+                )
+                .await
+            {
+                tracing::error!(provider = "mpesa", "callback attach failed: {err}");
+            }
+        }
+        Ok(None) => {
+            tracing::warn!(
+                provider = "mpesa",
+                checkout_request_id = %callback.checkout_request_id,
+                "callback received for unknown payment"
+            );
+        }
+        Err(err) => {
+            tracing::error!(
+                provider = "mpesa",
+                checkout_request_id = %callback.checkout_request_id,
+                "payment lookup failed: {err}"
+            );
+        }
+    }
 
     Ok(Json(WebhookAck {
         result_code: 0,

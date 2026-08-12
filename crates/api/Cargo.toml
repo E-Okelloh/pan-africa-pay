@@ -28,9 +28,11 @@ uuid = { workspace = true, features = ["v4", "v7", "serde", "fast-rng"] }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
 dotenvy = "0.15"
+chrono = { workspace = true }
 async-trait = "0.1"
 
 [dev-dependencies]
+wiremock = "0.6"
 http-body-util = "0.1"
 tower = { workspace = true, features = ["util"] }
 sqlx = { workspace = true }

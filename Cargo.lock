@@ -1379,6 +1379,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "chrono",
  "deadpool-redis",
  "dotenvy",
  "figment",
@@ -1397,6 +1398,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

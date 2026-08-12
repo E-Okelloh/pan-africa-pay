@@ -318,11 +318,20 @@ impl fmt::Display for UserId {
     }
 }
 
+/// A platform user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct User {
+    pub id: UserId,
+    pub email: String,
+    pub phone: PhoneNumber,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Unique identifier for a payment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PaymentId(pub Uuid);
-
 impl PaymentId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())

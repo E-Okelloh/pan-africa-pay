@@ -50,7 +50,16 @@ fn test_state() -> AppState {
         mpesa: None,
         kotani: None,
         idempotency: IdempotencyService::new(std::sync::Arc::new(
-            pan_africa_pay_storage::repositories::idempotency::IdempotencyRepo::new(pg, redis),
+            pan_africa_pay_storage::repositories::idempotency::IdempotencyRepo::new(
+                pg.clone(),
+                redis.clone(),
+            ),
+        )),
+        payments: std::sync::Arc::new(
+            pan_africa_pay_storage::repositories::payment::PaymentRepo::new(pg.clone()),
+        ),
+        users: std::sync::Arc::new(pan_africa_pay_storage::repositories::user::UserRepo::new(
+            pg,
         )),
     }
 }
@@ -391,4 +400,351 @@ async fn invalid_idempotency_key_returns_400() {
         .expect("response");
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// In-memory payment repository for router tests (no DB needed).
+#[derive(Default)]
+struct MemoryPaymentRepo {
+    payments: std::sync::Mutex<
+        std::collections::HashMap<
+            pan_africa_pay_domain::types::PaymentId,
+            pan_africa_pay_domain::types::Payment,
+        >,
+    >,
+}
+
+#[async_trait::async_trait]
+impl pan_africa_pay_domain::traits::PaymentRepository for MemoryPaymentRepo {
+    async fn create_payment(
+        &self,
+        payment: &pan_africa_pay_domain::types::Payment,
+    ) -> pan_africa_pay_domain::error::AppResult<()> {
+        self.payments
+            .lock()
+            .expect("lock")
+            .insert(payment.id, payment.clone());
+        Ok(())
+    }
+
+    async fn get_payment(
+        &self,
+        id: pan_africa_pay_domain::types::PaymentId,
+    ) -> pan_africa_pay_domain::error::AppResult<Option<pan_africa_pay_domain::types::Payment>>
+    {
+        Ok(self.payments.lock().expect("lock").get(&id).cloned())
+    }
+
+    async fn get_payment_by_idempotency_key(
+        &self,
+        key: &str,
+    ) -> pan_africa_pay_domain::error::AppResult<Option<pan_africa_pay_domain::types::Payment>>
+    {
+        Ok(self
+            .payments
+            .lock()
+            .expect("lock")
+            .values()
+            .find(|p| p.idempotency_key == key)
+            .cloned())
+    }
+
+    async fn get_payment_by_mpesa_checkout_request_id(
+        &self,
+        checkout_request_id: &str,
+    ) -> pan_africa_pay_domain::error::AppResult<Option<pan_africa_pay_domain::types::Payment>>
+    {
+        Ok(self
+            .payments
+            .lock()
+            .expect("lock")
+            .values()
+            .find(|p| p.mpesa_checkout_request_id.as_deref() == Some(checkout_request_id))
+            .cloned())
+    }
+
+    async fn update_payment_status(
+        &self,
+        id: pan_africa_pay_domain::types::PaymentId,
+        status: pan_africa_pay_domain::types::PaymentStatus,
+        mpesa_receipt_number: Option<String>,
+        kotani_tx_id: Option<String>,
+    ) -> pan_africa_pay_domain::error::AppResult<()> {
+        if let Some(p) = self.payments.lock().expect("lock").get_mut(&id) {
+            p.status = status;
+            p.mpesa_receipt_number = mpesa_receipt_number;
+            p.kotani_tx_id = kotani_tx_id;
+        }
+        Ok(())
+    }
+
+    async fn attach_callback_payload(
+        &self,
+        id: pan_africa_pay_domain::types::PaymentId,
+        payload: serde_json::Value,
+    ) -> pan_africa_pay_domain::error::AppResult<()> {
+        if let Some(p) = self.payments.lock().expect("lock").get_mut(&id) {
+            p.callback_payload = Some(payload);
+        }
+        Ok(())
+    }
+
+    async fn list_payments_by_user(
+        &self,
+        _user_id: pan_africa_pay_domain::types::UserId,
+        _limit: i64,
+        _offset: i64,
+    ) -> pan_africa_pay_domain::error::AppResult<Vec<pan_africa_pay_domain::types::Payment>> {
+        Ok(vec![])
+    }
+}
+
+/// In-memory user repository for router tests.
+#[derive(Default)]
+struct MemoryUserRepo {
+    users: std::sync::Mutex<
+        std::collections::HashMap<
+            pan_africa_pay_domain::types::UserId,
+            pan_africa_pay_domain::types::User,
+        >,
+    >,
+}
+
+#[async_trait::async_trait]
+impl pan_africa_pay_domain::traits::UserRepository for MemoryUserRepo {
+    async fn create_user(
+        &self,
+        user: &pan_africa_pay_domain::types::User,
+    ) -> pan_africa_pay_domain::error::AppResult<()> {
+        self.users
+            .lock()
+            .expect("lock")
+            .insert(user.id, user.clone());
+        Ok(())
+    }
+
+    async fn get_user(
+        &self,
+        id: pan_africa_pay_domain::types::UserId,
+    ) -> pan_africa_pay_domain::error::AppResult<Option<pan_africa_pay_domain::types::User>> {
+        Ok(self.users.lock().expect("lock").get(&id).cloned())
+    }
+}
+
+/// State wired with in-memory repos and optional provider clients.
+fn state_with_fakes(
+    mpesa: Option<pan_africa_pay_mpesa::MpesaClient>,
+    kotani: Option<pan_africa_pay_kotani::KotaniClient>,
+    users: std::sync::Arc<MemoryUserRepo>,
+    payments: std::sync::Arc<MemoryPaymentRepo>,
+) -> AppState {
+    let mut state = test_state();
+    state.mpesa = mpesa;
+    state.kotani = kotani;
+    state.idempotency =
+        IdempotencyService::new(std::sync::Arc::new(MemoryIdempotencyRepo::default()));
+    state.payments = payments;
+    state.users = users;
+    state
+}
+
+/// Build a state with in-memory repos and a seeded user.
+fn state_with_seeded_user(
+    mpesa: Option<pan_africa_pay_mpesa::MpesaClient>,
+    kotani: Option<pan_africa_pay_kotani::KotaniClient>,
+) -> (AppState, pan_africa_pay_domain::types::UserId) {
+    let users = std::sync::Arc::new(MemoryUserRepo::default());
+    let user_id = seeded_user();
+    let user = pan_africa_pay_domain::types::User {
+        id: user_id,
+        email: "test@example.com".to_string(),
+        phone: pan_africa_pay_domain::types::PhoneNumber::new("+254712345678").expect("phone"),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    users.users.lock().expect("lock").insert(user_id, user);
+    (
+        state_with_fakes(
+            mpesa,
+            kotani,
+            users,
+            std::sync::Arc::new(MemoryPaymentRepo::default()),
+        ),
+        user_id,
+    )
+}
+
+fn mpesa_config(base_url: &str) -> pan_africa_pay_mpesa::config::MpesaConfig {
+    pan_africa_pay_mpesa::config::MpesaConfig {
+        consumer_key: "ck".to_string(),
+        consumer_secret: "cs".to_string(),
+        passkey: "pk".to_string(),
+        short_code: "174379".to_string(),
+        callback_url: "https://example.com/webhooks/mpesa".to_string(),
+        environment: pan_africa_pay_mpesa::config::Environment::Sandbox,
+        timeout_secs: 30,
+        token_ttl_secs: 3600,
+        base_url_override: base_url.to_string(),
+    }
+}
+
+fn kotani_config(base_url: &str) -> pan_africa_pay_kotani::KotaniConfig {
+    pan_africa_pay_kotani::KotaniConfig {
+        api_key: "key".to_string(),
+        api_secret: "secret".to_string(),
+        base_url: base_url.to_string(),
+        webhook_secret: "whsec".to_string(),
+        callback_url: "https://example.com/webhooks/kotani".to_string(),
+        wallet_id: "wallet-1".to_string(),
+        timeout_secs: 30,
+    }
+}
+
+fn seeded_user() -> pan_africa_pay_domain::types::UserId {
+    pan_africa_pay_domain::types::UserId::new()
+}
+
+#[tokio::test]
+async fn payin_kess_routes_to_mpesa_rail() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/oauth/v1/generate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "token-1",
+            "expires_in": 3599
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/mpesa/stkpush/v1/processrequest"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "MerchantRequestID": "m1",
+            "CheckoutRequestID": "ws_CO_1",
+            "ResponseCode": "0",
+            "ResponseDescription": "Success. Request accepted for processing"
+        })))
+        .mount(&server)
+        .await;
+
+    let (state, user_id) = state_with_seeded_user(
+        Some(
+            pan_africa_pay_mpesa::MpesaClient::from_config(mpesa_config(&server.uri()))
+                .expect("mpesa client"),
+        ),
+        None,
+    );
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "user_id": user_id.to_string(),
+        "amount": 1500,
+        "currency": "KES",
+        "phone": "+254712345678"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/payments/payin")
+                .header("content-type", "application/json")
+                .header("idempotency-key", "payin-kes-1")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+    assert_eq!(json["data"]["rail"], "MPESA");
+    assert_eq!(json["data"]["status"], "PENDING");
+    assert_eq!(json["data"]["mpesa_checkout_request_id"], "ws_CO_1");
+    assert!(json["data"]["payment_id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn payin_usdc_routes_to_kotani_rail() {
+    use wiremock::matchers::{bearer_token, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v3/customer/mobile-money"))
+        .and(bearer_token("key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "message": "Customer created",
+            "data": {
+                "id": "cust-1",
+                "phone_number": "+254712345678",
+                "country_code": "KE",
+                "customer_key": "customer-key-123"
+            }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v3/deposit/mobile-money"))
+        .and(bearer_token("key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "message": "Deposit created",
+            "data": {
+                "id": "dep-1",
+                "message": "pending",
+                "reference_id": "some-ref",
+                "reference_number": 42
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (state, user_id) = state_with_seeded_user(
+        None,
+        Some(
+            pan_africa_pay_kotani::KotaniClient::from_config(kotani_config(&server.uri()))
+                .expect("kotani client"),
+        ),
+    );
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "user_id": user_id.to_string(),
+        "amount": 5_000_000,
+        "currency": "USDC",
+        "phone": "+254712345678"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/payments/payin")
+                .header("content-type", "application/json")
+                .header("idempotency-key", "payin-usdc-1")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+    assert_eq!(json["data"]["rail"], "KOTANI");
+    assert_eq!(json["data"]["status"], "PROCESSING");
+    assert_eq!(json["data"]["kotani_tx_id"], "dep-1");
+    assert_eq!(json["data"]["kotani_customer_key"], "customer-key-123");
 }

@@ -278,7 +278,7 @@ pub struct StatusAck {
 ///
 /// Fields marked with `#[allow(dead_code)]` are part of the wire
 /// contract even if the current handler does not consume them yet.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[allow(dead_code)]
 pub struct KotaniCallback {
     /// Event type, e.g. `deposit.success`, `deposit.failed`.
@@ -334,6 +334,69 @@ pub async fn webhook(
         "received Kotani callback"
     );
 
+    // Reconcile: the deposit reference_id is our payment id. Resolve the
+    // payment and update its status from the callback. Reconciliation is
+    // best-effort at callback time: storage failures are logged and the
+    // callback still acknowledged so Kotani never retries.
+    let reference = callback
+        .reference_id
+        .as_deref()
+        .or(callback.reference_id_camel.as_deref());
+    if let Some(reference) = reference {
+        if let Some(id) = parse_payment_id(reference) {
+            match state.payments.get_payment(id).await {
+                Ok(Some(payment)) => {
+                    let outcome = callback
+                        .event
+                        .as_deref()
+                        .or(callback.status.as_deref())
+                        .unwrap_or_default()
+                        .to_lowercase();
+                    let status = if outcome.contains("success") || outcome.contains("complete") {
+                        pan_africa_pay_domain::types::PaymentStatus::Completed
+                    } else if outcome.contains("fail") || outcome.contains("cancel") {
+                        pan_africa_pay_domain::types::PaymentStatus::Failed
+                    } else {
+                        pan_africa_pay_domain::types::PaymentStatus::Processing
+                    };
+                    if let Err(err) = state
+                        .payments
+                        .update_payment_status(payment.id, status, None, None)
+                        .await
+                    {
+                        tracing::error!(provider = "kotani", "payment update failed: {err}");
+                    }
+                    if let Err(err) = state
+                        .payments
+                        .attach_callback_payload(
+                            payment.id,
+                            serde_json::to_value(&callback).unwrap_or_default(),
+                        )
+                        .await
+                    {
+                        tracing::error!(provider = "kotani", "callback attach failed: {err}");
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        provider = "kotani",
+                        reference_id = reference,
+                        "callback received for unknown payment"
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(provider = "kotani", "payment lookup failed: {err}");
+                }
+            }
+        } else {
+            tracing::warn!(
+                provider = "kotani",
+                reference_id = reference,
+                "callback reference is not a payment id"
+            );
+        }
+    }
+
     Ok(Json(serde_json::json!({ "received": true })))
 }
 
@@ -344,6 +407,13 @@ fn kotani_client(state: &AppState) -> ApiResult<&pan_africa_pay_kotani::KotaniCl
             "Kotani is not configured",
         ))
     })
+}
+
+/// Parse a callback reference into a payment id (UUID).
+fn parse_payment_id(reference: &str) -> Option<pan_africa_pay_domain::types::PaymentId> {
+    uuid::Uuid::parse_str(reference)
+        .ok()
+        .map(pan_africa_pay_domain::types::PaymentId)
 }
 
 /// E.164 phone validation: optional `+`, country code + 9 digits.
