@@ -41,6 +41,10 @@ fn test_state() -> AppState {
                 .expect("redis pool")
         })
         .expect("redis manager");
+    let audit = std::sync::Arc::new(pan_africa_pay_storage::repositories::audit::AuditRepo::new(
+        pg.clone(),
+    ));
+    let events: std::sync::Arc<dyn pan_africa_pay_domain::traits::EventPublisher> = audit.clone();
     AppState {
         config: std::sync::Arc::new(config),
         pool: DatabasePool {
@@ -59,8 +63,10 @@ fn test_state() -> AppState {
             pan_africa_pay_storage::repositories::payment::PaymentRepo::new(pg.clone()),
         ),
         users: std::sync::Arc::new(pan_africa_pay_storage::repositories::user::UserRepo::new(
-            pg,
+            pg.clone(),
         )),
+        events,
+        audit,
     }
 }
 

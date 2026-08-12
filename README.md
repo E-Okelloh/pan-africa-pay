@@ -63,6 +63,7 @@ cargo test --workspace
 | `POST` | `/webhooks/kotani` | Signed Kotani transaction callback |
 | `POST` | `/payments/payin` | Dual-rail payin: `KES` -> M-Pesa, `USDC` -> Kotani |
 | `GET` | `/payments/{id}` | Fetch a payment |
+| `GET` | `/payments/{id}/audit` | Audit trail of domain events for a payment |
 | `GET` | `/payments?user_id=...` | List a user's payments |
 | `POST` | `/users` | Create a platform user |
 
@@ -73,6 +74,12 @@ payments to `COMPLETED`/`FAILED` and attach the provider callback
 payload for audit. A reconciliation sweeper additionally polls provider
 status endpoints every minute and settles payments stuck in
 `PENDING`/`PROCESSING` whose callback was missed.
+
+Every payment lifecycle change emits a domain event (payment
+transition, M-Pesa collection, Kotani transaction) into the append-only
+`audit_log` table — `GET /payments/{id}/audit` exposes the trail.
+Event publishing is best-effort: audit failures are logged, never
+breaking the payment flow.
 
 Every mutating endpoint accepts an optional `Idempotency-Key` header
 (URL-safe, max 128 chars): retries with the same key and body replay

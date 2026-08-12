@@ -2,6 +2,7 @@
 //!
 //! Each module implements a trait from `pan-africa-pay-domain::traits`.
 
+pub mod audit;
 pub mod idempotency;
 pub mod payment;
 pub mod user;
@@ -22,6 +23,8 @@ pub struct Repositories {
     pub users: Arc<user::UserRepo>,
     /// Idempotency record adapter (Redis + PG).
     pub idempotency: Arc<idempotency::IdempotencyRepo>,
+    /// Audit log adapter.
+    pub audit: Arc<audit::AuditRepo>,
 }
 
 impl Repositories {
@@ -31,7 +34,8 @@ impl Repositories {
             payments: Arc::new(payment::PaymentRepo::new(pg.clone())),
             wallets: Arc::new(wallet::WalletRepo::new(pg.clone())),
             users: Arc::new(user::UserRepo::new(pg.clone())),
-            idempotency: Arc::new(idempotency::IdempotencyRepo::new(pg, redis_pool)),
+            idempotency: Arc::new(idempotency::IdempotencyRepo::new(pg.clone(), redis_pool)),
+            audit: Arc::new(audit::AuditRepo::new(pg)),
         }
     }
 }

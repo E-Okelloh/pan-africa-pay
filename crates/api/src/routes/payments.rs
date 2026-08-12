@@ -17,12 +17,14 @@ use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use pan_africa_pay_domain::events::{DomainEvent, PaymentEvent};
 use pan_africa_pay_domain::idempotency::RequestHash;
 use pan_africa_pay_domain::types::{
     Currency, Money, Payment, PaymentId, PaymentStatus, PaymentType, PhoneNumber, Rail, User,
     UserId,
 };
 use pan_africa_pay_mpesa::types::StkPushRequest;
+use pan_africa_pay_storage::repositories::audit::AuditEntry;
 
 use crate::error::{ApiError, ApiResult};
 use crate::idempotency::{claim_or_replay, IdempotencyHeader};
@@ -222,6 +224,17 @@ pub async fn payin(
         .await
         .map_err(ApiError::from)?;
 
+    crate::events::publish_best_effort(
+        state.events.as_ref(),
+        &[DomainEvent::PaymentTransition(PaymentEvent::new(
+            payment_id,
+            payload.user_id,
+            status,
+            None,
+        ))],
+    )
+    .await;
+
     let ack = PayinAck {
         payment_id: payment.id.to_string(),
         rail,
@@ -254,6 +267,30 @@ pub async fn get_payment(
             ApiError::from(pan_africa_pay_domain::error::AppError::not_found("payment"))
         })?;
     Ok(ok(payment))
+}
+
+/// Fetch the audit trail (domain event log) for a payment.
+pub async fn get_payment_audit(
+    State(state): State<AppState>,
+    Path(id): Path<PaymentId>,
+) -> ApiResult<Json<OkEnvelope<Vec<AuditEntry>>>> {
+    if state
+        .payments
+        .get_payment(id)
+        .await
+        .map_err(ApiError::from)?
+        .is_none()
+    {
+        return Err(ApiError::from(
+            pan_africa_pay_domain::error::AppError::not_found("payment"),
+        ));
+    }
+    let entries = state
+        .audit
+        .list_for_entity("PAYMENT", id.0, 100)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(ok(entries))
 }
 
 /// List payments for a user.

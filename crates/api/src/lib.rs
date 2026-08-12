@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod error;
+pub mod events;
 pub mod idempotency;
 pub mod reconciliation;
 pub mod routes;

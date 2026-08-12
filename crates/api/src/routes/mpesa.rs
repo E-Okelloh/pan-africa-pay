@@ -7,7 +7,10 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use chrono::Utc;
+use pan_africa_pay_domain::events::{DomainEvent, EventId, MpesaCollectedEvent, PaymentEvent};
 use pan_africa_pay_domain::idempotency::RequestHash;
+use pan_africa_pay_domain::types::{Payment, PaymentStatus, PhoneNumber};
 use pan_africa_pay_mpesa::types::StkPushRequest;
 use tracing::info;
 
@@ -260,7 +263,7 @@ pub async fn webhook(
             };
             if let Err(err) = state
                 .payments
-                .update_payment_status(payment.id, status, receipt, None)
+                .update_payment_status(payment.id, status, receipt.clone(), None)
                 .await
             {
                 tracing::error!(provider = "mpesa", "payment update failed: {err}");
@@ -275,6 +278,11 @@ pub async fn webhook(
             {
                 tracing::error!(provider = "mpesa", "callback attach failed: {err}");
             }
+            crate::events::publish_best_effort(
+                state.events.as_ref(),
+                &mpesa_reconciliation_events(&payment, status, receipt.clone(), &metadata),
+            )
+            .await;
         }
         Ok(None) => {
             tracing::warn!(
@@ -296,6 +304,50 @@ pub async fn webhook(
         result_code: 0,
         result_desc: "Success".to_string(),
     }))
+}
+
+/// Audit events for an STK callback reconciliation: always a
+/// `PaymentTransition`; plus `MpesaCollected` when the callback carried
+/// a receipt and a phone number to attribute the collection to.
+fn mpesa_reconciliation_events(
+    payment: &Payment,
+    status: PaymentStatus,
+    receipt: Option<String>,
+    metadata: &[(String, Option<serde_json::Value>)],
+) -> Vec<DomainEvent> {
+    let mut events = vec![DomainEvent::PaymentTransition(PaymentEvent::new(
+        payment.id,
+        payment.user_id,
+        status,
+        Some(payment.status),
+    ))];
+    if status == PaymentStatus::Completed {
+        let receipt_number = match receipt {
+            Some(receipt) => receipt,
+            None => return events,
+        };
+        let phone = metadata
+            .iter()
+            .find(|(name, _)| name == "PhoneNumber")
+            .and_then(|(_, value)| value.as_ref().and_then(|v| v.as_str()))
+            .and_then(|raw| PhoneNumber::new(raw).ok());
+        if let Some(phone) = phone {
+            events.push(DomainEvent::MpesaCollected(MpesaCollectedEvent {
+                event_id: EventId::new(),
+                payment_id: payment.id,
+                user_id: payment.user_id,
+                phone,
+                amount: payment.amount,
+                checkout_request_id: payment
+                    .mpesa_checkout_request_id
+                    .clone()
+                    .unwrap_or_default(),
+                receipt_number,
+                occurred_at: Utc::now(),
+            }));
+        }
+    }
+    events
 }
 
 /// Deserialize a request body, mapping JSON failures to 400 validation

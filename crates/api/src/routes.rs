@@ -41,6 +41,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/webhooks/kotani", post(kotani::webhook))
         .route("/payments/payin", post(payments::payin))
         .route("/payments/{id}", get(payments::get_payment))
+        .route("/payments/{id}/audit", get(payments::get_payment_audit))
         .route("/payments", get(payments::list_payments))
         .route("/users", post(payments::create_user))
         .layer(CatchPanicLayer::new())

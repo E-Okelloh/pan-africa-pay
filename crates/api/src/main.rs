@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         state.payments.clone(),
         state.mpesa.clone(),
         state.kotani.clone(),
+        state.events.clone(),
         config.sweep.interval_secs,
         config.sweep.stale_minutes,
     );

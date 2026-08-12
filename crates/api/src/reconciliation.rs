@@ -18,7 +18,8 @@ use std::time::Duration;
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 
-use pan_africa_pay_domain::traits::PaymentRepository;
+use pan_africa_pay_domain::events::{DomainEvent, PaymentEvent};
+use pan_africa_pay_domain::traits::{EventPublisher, PaymentRepository};
 use pan_africa_pay_domain::types::{Payment, PaymentStatus, Rail};
 use pan_africa_pay_kotani::KotaniClient;
 use pan_africa_pay_mpesa::MpesaClient;
@@ -41,6 +42,7 @@ pub struct ReconciliationSweeper {
     payments: Arc<dyn PaymentRepository>,
     mpesa: Option<MpesaClient>,
     kotani: Option<KotaniClient>,
+    events: Arc<dyn EventPublisher>,
     interval_secs: u64,
     stale_minutes: i64,
 }
@@ -51,6 +53,7 @@ impl ReconciliationSweeper {
         payments: Arc<dyn PaymentRepository>,
         mpesa: Option<MpesaClient>,
         kotani: Option<KotaniClient>,
+        events: Arc<dyn EventPublisher>,
         interval_secs: u64,
         stale_minutes: i64,
     ) -> Self {
@@ -58,6 +61,7 @@ impl ReconciliationSweeper {
             payments,
             mpesa,
             kotani,
+            events,
             interval_secs,
             stale_minutes,
         }
@@ -156,6 +160,16 @@ impl ReconciliationSweeper {
             .update_payment_status(payment.id, status, None, None)
             .await
             .map_err(|e| format!("status update failed: {e}"))?;
+        crate::events::publish_best_effort(
+            self.events.as_ref(),
+            &[DomainEvent::PaymentTransition(PaymentEvent::new(
+                payment.id,
+                payment.user_id,
+                status,
+                Some(payment.status),
+            ))],
+        )
+        .await;
         Ok(true)
     }
 
@@ -204,6 +218,16 @@ impl ReconciliationSweeper {
             .update_payment_status(payment.id, status, None, None)
             .await
             .map_err(|e| format!("status update failed: {e}"))?;
+        crate::events::publish_best_effort(
+            self.events.as_ref(),
+            &[DomainEvent::PaymentTransition(PaymentEvent::new(
+                payment.id,
+                payment.user_id,
+                status,
+                Some(payment.status),
+            ))],
+        )
+        .await;
         Ok(true)
     }
 }
@@ -217,7 +241,22 @@ mod tests {
     use std::sync::Mutex;
 
     use pan_africa_pay_domain::error::AppResult;
+    use pan_africa_pay_domain::events::DomainEvent;
+    use pan_africa_pay_domain::traits::EventPublisher;
     use pan_africa_pay_domain::types::{Currency, Money, PaymentId, PaymentType, UserId};
+
+    #[derive(Default)]
+    struct FakeEvents {
+        published: Mutex<Vec<DomainEvent>>,
+    }
+
+    #[async_trait]
+    impl EventPublisher for FakeEvents {
+        async fn publish(&self, event: &DomainEvent) -> AppResult<()> {
+            self.published.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+    }
 
     #[derive(Default)]
     struct FakePayments {
@@ -321,7 +360,14 @@ mod tests {
             payment(Rail::Mpesa, PaymentStatus::Pending),
         );
 
-        let sweeper = ReconciliationSweeper::new(payments.clone(), None, None, 60, 10);
+        let sweeper = ReconciliationSweeper::new(
+            payments.clone(),
+            None,
+            None,
+            Arc::new(FakeEvents::default()),
+            60,
+            10,
+        );
         let settled = sweeper.sweep_once().await.expect("sweep");
         assert_eq!(settled, 0);
         assert!(payments.statuses.lock().unwrap().is_empty());
@@ -373,7 +419,14 @@ mod tests {
         let pending = payment(Rail::Mpesa, PaymentStatus::Pending);
         payments.records.lock().unwrap().insert(pending.id, pending);
 
-        let sweeper = ReconciliationSweeper::new(payments.clone(), Some(client), None, 60, 10);
+        let sweeper = ReconciliationSweeper::new(
+            payments.clone(),
+            Some(client),
+            None,
+            Arc::new(FakeEvents::default()),
+            60,
+            10,
+        );
         let settled = sweeper.sweep_once().await.expect("sweep");
         assert_eq!(settled, 1);
         let statuses = payments.statuses.lock().unwrap();
@@ -417,7 +470,14 @@ mod tests {
         let pending = payment(Rail::Kotani, PaymentStatus::Processing);
         payments.records.lock().unwrap().insert(pending.id, pending);
 
-        let sweeper = ReconciliationSweeper::new(payments.clone(), None, Some(client), 60, 10);
+        let sweeper = ReconciliationSweeper::new(
+            payments.clone(),
+            None,
+            Some(client),
+            Arc::new(FakeEvents::default()),
+            60,
+            10,
+        );
         let settled = sweeper.sweep_once().await.expect("sweep");
         assert_eq!(settled, 1);
         let statuses = payments.statuses.lock().unwrap();

@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
-use pan_africa_pay_domain::traits::{PaymentRepository, UserRepository};
+use pan_africa_pay_domain::traits::{EventPublisher, PaymentRepository, UserRepository};
 use pan_africa_pay_kotani::KotaniClient;
 use pan_africa_pay_mpesa::MpesaClient;
+use pan_africa_pay_storage::repositories::audit::AuditRepo;
 use pan_africa_pay_storage::repositories::idempotency::IdempotencyRepo;
 use pan_africa_pay_storage::repositories::payment::PaymentRepo;
 use pan_africa_pay_storage::repositories::user::UserRepo;
@@ -30,6 +31,10 @@ pub struct AppState {
     pub payments: Arc<dyn PaymentRepository>,
     /// User persistence.
     pub users: Arc<dyn UserRepository>,
+    /// Audit event sink (append-only audit log).
+    pub events: Arc<dyn EventPublisher>,
+    /// Audit log reader.
+    pub audit: Arc<pan_africa_pay_storage::repositories::audit::AuditRepo>,
 }
 
 impl AppState {
@@ -60,6 +65,8 @@ impl AppState {
         )));
         let payments = Arc::new(PaymentRepo::new(pool.pg.clone()));
         let users = Arc::new(UserRepo::new(pool.pg.clone()));
+        let audit = Arc::new(AuditRepo::new(pool.pg.clone()));
+        let events: Arc<dyn EventPublisher> = audit.clone();
         Ok(Self {
             config: Arc::new(config),
             pool,
@@ -68,6 +75,8 @@ impl AppState {
             idempotency,
             payments,
             users,
+            events,
+            audit,
         })
     }
 

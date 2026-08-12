@@ -376,6 +376,11 @@ pub async fn webhook(
                     {
                         tracing::error!(provider = "kotani", "callback attach failed: {err}");
                     }
+                    crate::events::publish_best_effort(
+                        state.events.as_ref(),
+                        &kotani_reconciliation_events(&payment, status),
+                    )
+                    .await;
                 }
                 Ok(None) => {
                     tracing::warn!(
@@ -398,6 +403,37 @@ pub async fn webhook(
     }
 
     Ok(Json(serde_json::json!({ "received": true })))
+}
+
+/// Audit events for a Kotani callback reconciliation: always a
+/// `PaymentTransition`; plus `KotaniTransaction` when the deposit
+/// completed and we hold its transaction id.
+fn kotani_reconciliation_events(
+    payment: &pan_africa_pay_domain::types::Payment,
+    status: pan_africa_pay_domain::types::PaymentStatus,
+) -> Vec<pan_africa_pay_domain::events::DomainEvent> {
+    use pan_africa_pay_domain::events::{DomainEvent, EventId, KotaniTransactionEvent};
+    let mut events = vec![DomainEvent::PaymentTransition(
+        pan_africa_pay_domain::events::PaymentEvent::new(
+            payment.id,
+            payment.user_id,
+            status,
+            Some(payment.status),
+        ),
+    )];
+    if status == pan_africa_pay_domain::types::PaymentStatus::Completed {
+        if let Some(kotani_tx_id) = payment.kotani_tx_id.clone() {
+            events.push(DomainEvent::KotaniTransaction(KotaniTransactionEvent {
+                event_id: EventId::new(),
+                payment_id: payment.id,
+                user_id: payment.user_id,
+                kotani_tx_id,
+                amount: payment.amount,
+                occurred_at: chrono::Utc::now(),
+            }));
+        }
+    }
+    events
 }
 
 /// Access the Kotani client, failing fast when unconfigured.
