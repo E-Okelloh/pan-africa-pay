@@ -9,6 +9,7 @@ use figment::providers::{Env, Format, Toml};
 use figment::Figment;
 use serde::Deserialize;
 
+use pan_africa_pay_mpesa::config::MpesaConfig;
 use pan_africa_pay_storage::DatabaseConfig;
 
 /// Default HTTP bind port.
@@ -85,6 +86,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     /// Logging settings.
     pub logging: LoggingConfig,
+    /// M-Pesa Daraja provider settings.
+    pub mpesa: MpesaConfig,
 }
 
 impl AppConfig {
@@ -140,6 +143,14 @@ pub fn default_figment() -> Figment {
                 .split("_")
                 .map(|k| format!("database.redis_{}", k.to_string().to_lowercase()).into()),
         )
+        .merge(
+            // `raw()` keeps values as strings — without it figment would
+            // infer e.g. `174379` as an integer and reject the String
+            // fields of `MpesaConfig`.
+            Env::raw()
+                .prefixed("MPESA_")
+                .map(|k| format!("mpesa.{}", k.to_string().to_lowercase()).into()),
+        )
 }
 
 #[cfg(test)]
@@ -175,6 +186,34 @@ mod tests {
         unsafe {
             std::env::remove_var("APP_PORT");
             std::env::remove_var("REDIS_URL");
+        }
+    }
+
+    #[test]
+    fn mpesa_env_vars_map_to_flat_config_fields() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("MPESA_SHORT_CODE");
+        std::env::remove_var("MPESA_ENVIRONMENT");
+        std::env::remove_var("MPESA_BASE_URL_OVERRIDE");
+
+        unsafe {
+            std::env::set_var("MPESA_SHORT_CODE", "174379");
+            std::env::set_var("MPESA_ENVIRONMENT", "sandbox");
+            std::env::set_var("MPESA_BASE_URL_OVERRIDE", "http://localhost:9999");
+        }
+        let config = AppConfig::from_figment(default_figment()).expect("config");
+        assert_eq!(config.mpesa.short_code, "174379");
+        assert_eq!(
+            config.mpesa.environment,
+            pan_africa_pay_mpesa::config::Environment::Sandbox
+        );
+        assert_eq!(config.mpesa.base_url_override, "http://localhost:9999");
+        assert!(config.mpesa.is_configured());
+
+        unsafe {
+            std::env::remove_var("MPESA_SHORT_CODE");
+            std::env::remove_var("MPESA_ENVIRONMENT");
+            std::env::remove_var("MPESA_BASE_URL_OVERRIDE");
         }
     }
 }

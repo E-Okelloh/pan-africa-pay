@@ -1,6 +1,6 @@
 //! HTTP routes and the application router.
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -9,6 +9,7 @@ use tower_http::trace::TraceLayer;
 use crate::state::AppState;
 
 mod health;
+mod mpesa;
 
 /// Build the application router with all middleware applied.
 ///
@@ -18,6 +19,8 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_check))
         .route("/health/ready", get(health::ready_check))
+        .route("/mpesa/stk/push", post(mpesa::stk_push))
+        .route("/webhooks/mpesa", post(mpesa::webhook))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)

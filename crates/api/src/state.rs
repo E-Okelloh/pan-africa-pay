@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use pan_africa_pay_mpesa::MpesaClient;
 use pan_africa_pay_storage::DatabasePool;
 
 use crate::config::AppConfig;
@@ -13,6 +14,8 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     /// Database and cache pools.
     pub pool: DatabasePool,
+    /// M-Pesa Daraja client, present when `MPESA_*` is configured.
+    pub mpesa: Option<MpesaClient>,
 }
 
 impl AppState {
@@ -21,9 +24,18 @@ impl AppState {
         let pool = DatabasePool::connect(&config.database)
             .await
             .map_err(|e| anyhow::anyhow!("failed to connect to stores: {e}"))?;
+        let mpesa = if config.mpesa.is_configured() {
+            Some(
+                MpesaClient::from_config(config.mpesa.clone())
+                    .map_err(|e| anyhow::anyhow!("invalid M-Pesa config: {e}"))?,
+            )
+        } else {
+            None
+        };
         Ok(Self {
             config: Arc::new(config),
             pool,
+            mpesa,
         })
     }
 

@@ -1383,6 +1383,7 @@ dependencies = [
  "figment",
  "http-body-util",
  "pan-africa-pay-domain",
+ "pan-africa-pay-mpesa",
  "pan-africa-pay-storage",
  "parking_lot",
  "serde",

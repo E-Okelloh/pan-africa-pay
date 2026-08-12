@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 pan-africa-pay-domain = { path = "../domain" }
 pan-africa-pay-storage = { path = "../storage" }
+pan-africa-pay-mpesa = { path = "../mpesa" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
