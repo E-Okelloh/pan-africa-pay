@@ -152,7 +152,7 @@ pub fn default_figment() -> Figment {
                 if let Some(rest) = key.strip_prefix("MPESA_") {
                     format!("mpesa.{}", rest.to_lowercase()).into()
                 } else {
-                    k
+                    k.into()
                 }
             }),
         )
