@@ -9,6 +9,7 @@ use figment::providers::{Env, Format, Toml};
 use figment::Figment;
 use serde::Deserialize;
 
+use pan_africa_pay_kotani::config::KotaniConfig;
 use pan_africa_pay_mpesa::config::MpesaConfig;
 use pan_africa_pay_storage::DatabaseConfig;
 
@@ -88,6 +89,8 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
     /// M-Pesa Daraja provider settings.
     pub mpesa: MpesaConfig,
+    /// Kotani Pay provider settings.
+    pub kotani: KotaniConfig,
 }
 
 impl AppConfig {
@@ -144,6 +147,7 @@ pub fn default_figment() -> Figment {
                 .map(|k| format!("database.redis_{}", k.to_string().to_lowercase()).into()),
         )
         .merge(mpesa_env_provider())
+        .merge(kotani_env_provider())
 }
 
 /// Environment provider for M-Pesa settings.
@@ -159,6 +163,21 @@ fn mpesa_env_provider() -> figment::providers::Serialized<serde_json::Value> {
         }
     }
     let config = serde_json::json!({ "mpesa": serde_json::Value::Object(mpesa) });
+    figment::providers::Serialized::from(config, figment::Profile::Default)
+}
+
+/// Environment provider for Kotani settings.
+///
+/// `KOTANI_*` variables are surfaced as a JSON object so values stay
+/// strings, mirroring `mpesa_env_provider`.
+fn kotani_env_provider() -> figment::providers::Serialized<serde_json::Value> {
+    let mut kotani = serde_json::Map::new();
+    for (key, value) in std::env::vars() {
+        if let Some(rest) = key.strip_prefix("KOTANI_") {
+            kotani.insert(rest.to_lowercase(), serde_json::Value::String(value));
+        }
+    }
+    let config = serde_json::json!({ "kotani": serde_json::Value::Object(kotani) });
     figment::providers::Serialized::from(config, figment::Profile::Default)
 }
 
@@ -231,6 +250,34 @@ mod tests {
         );
         assert_eq!(config.mpesa.base_url_override, "http://localhost:9999");
         assert!(config.mpesa.is_configured());
+
+        for var in vars {
+            unsafe { std::env::remove_var(var) };
+        }
+    }
+
+    #[test]
+    fn kotani_env_vars_map_to_flat_config_fields() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            "KOTANI_API_KEY",
+            "KOTANI_API_SECRET",
+            "KOTANI_WEBHOOK_SECRET",
+        ];
+        for var in vars {
+            unsafe { std::env::remove_var(var) };
+        }
+
+        unsafe {
+            std::env::set_var("KOTANI_API_KEY", "key");
+            std::env::set_var("KOTANI_API_SECRET", "secret");
+            std::env::set_var("KOTANI_WEBHOOK_SECRET", "whsec");
+        }
+        let config = AppConfig::from_figment(default_figment()).expect("config");
+        assert_eq!(config.kotani.api_key, "key");
+        assert_eq!(config.kotani.api_secret, "secret");
+        assert_eq!(config.kotani.webhook_secret, "whsec");
+        assert!(config.kotani.is_configured());
 
         for var in vars {
             unsafe { std::env::remove_var(var) };

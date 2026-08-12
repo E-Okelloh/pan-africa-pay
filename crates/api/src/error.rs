@@ -13,6 +13,7 @@ use axum::Json;
 use serde::Serialize;
 
 use pan_africa_pay_domain::error::{AppError, ErrorCode};
+use pan_africa_pay_kotani::KotaniError;
 use pan_africa_pay_mpesa::MpesaError;
 
 /// HTTP layer wrapper around a domain [`AppError`].
@@ -32,6 +33,12 @@ impl From<AppError> for ApiError {
 
 impl From<MpesaError> for ApiError {
     fn from(err: MpesaError) -> Self {
+        Self(AppError::from(err))
+    }
+}
+
+impl From<KotaniError> for ApiError {
+    fn from(err: KotaniError) -> Self {
         Self(AppError::from(err))
     }
 }

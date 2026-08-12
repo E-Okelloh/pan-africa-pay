@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use pan_africa_pay_kotani::KotaniClient;
 use pan_africa_pay_mpesa::MpesaClient;
 use pan_africa_pay_storage::DatabasePool;
 
@@ -16,6 +17,8 @@ pub struct AppState {
     pub pool: DatabasePool,
     /// M-Pesa Daraja client, present when `MPESA_*` is configured.
     pub mpesa: Option<MpesaClient>,
+    /// Kotani Pay client, present when `KOTANI_*` is configured.
+    pub kotani: Option<KotaniClient>,
 }
 
 impl AppState {
@@ -32,10 +35,19 @@ impl AppState {
         } else {
             None
         };
+        let kotani = if config.kotani.is_configured() {
+            Some(
+                KotaniClient::from_config(config.kotani.clone())
+                    .map_err(|e| anyhow::anyhow!("invalid Kotani config: {e}"))?,
+            )
+        } else {
+            None
+        };
         Ok(Self {
             config: Arc::new(config),
             pool,
             mpesa,
+            kotani,
         })
     }
 

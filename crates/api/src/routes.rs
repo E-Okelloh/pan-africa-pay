@@ -9,6 +9,7 @@ use tower_http::trace::TraceLayer;
 use crate::state::AppState;
 
 mod health;
+mod kotani;
 mod mpesa;
 
 /// Build the application router with all middleware applied.
@@ -21,6 +22,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health/ready", get(health::ready_check))
         .route("/mpesa/stk/push", post(mpesa::stk_push))
         .route("/webhooks/mpesa", post(mpesa::webhook))
+        .route("/kotani/customers", post(kotani::create_customer))
+        .route("/kotani/deposit", post(kotani::deposit))
+        .route("/kotani/withdraw", post(kotani::withdraw))
+        .route("/webhooks/kotani", post(kotani::webhook))
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)

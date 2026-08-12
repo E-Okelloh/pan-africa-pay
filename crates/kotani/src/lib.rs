@@ -1,7 +1,17 @@
-//! Kotani Pay integration crate.
+//! Kotani Pay client (API v3) for pan-africa-pay.
 //!
-//! Phase 2 implementation: USDC deposits/withdrawals, cross-border
-//! transfers, and webhook verification against the Kotani Pay sandbox
-//! API. This module currently contains scaffolding only.
+//! Kotani Pay provides mobile money rails across Africa: register mobile
+//! money customers, initiate deposits (fiat -> stablecoin) and
+//! withdrawals (stablecoin -> fiat), and receive signed webhook
+//! callbacks for transaction outcomes.
 
-pub fn placeholder() {}
+pub mod client;
+pub mod config;
+pub mod error;
+pub mod types;
+pub mod webhook;
+
+pub use client::KotaniClient;
+pub use config::{KotaniConfig, PRODUCTION_BASE_URL, SANDBOX_BASE_URL};
+pub use error::{KotaniError, KotaniResult};
+pub use webhook::verify_signature as verify_webhook_signature;

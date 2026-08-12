@@ -1383,6 +1383,7 @@ dependencies = [
  "figment",
  "http-body-util",
  "pan-africa-pay-domain",
+ "pan-africa-pay-kotani",
  "pan-africa-pay-mpesa",
  "pan-africa-pay-storage",
  "parking_lot",
@@ -1416,13 +1417,17 @@ dependencies = [
 name = "pan-africa-pay-kotani"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "hmac",
  "pan-africa-pay-domain",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]

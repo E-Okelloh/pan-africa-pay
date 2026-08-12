@@ -44,6 +44,7 @@ fn test_state() -> AppState {
         config: std::sync::Arc::new(config),
         pool: DatabasePool { pg, redis },
         mpesa: None,
+        kotani: None,
     }
 }
 
